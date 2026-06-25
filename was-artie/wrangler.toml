@@ -4,7 +4,7 @@
 # Worker (and keeps its secrets), instead of spawning a new one.
 name = "was-artie"
 main = "was-artie.js"
-compatibility_date = "2024-01-01"   # match was-dash-cal's value if you want them identical
+compatibility_date = "2026-06-17"  # match was-dash-cal's value if you want them identical
 
 # Rate-limiting + the knowledge/schedule cache live in KV. This binding MUST be
 # declared here — if it's missing, the GitHub build deploys Artie WITHOUT it and
