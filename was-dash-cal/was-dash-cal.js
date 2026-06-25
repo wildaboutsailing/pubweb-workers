@@ -656,14 +656,7 @@ export default {
       // ── Registration close filter ────────────────────────────────────────
       // Exclude courses where sign-up is closed or the course is sold out.
       // Uses registrationCloseDate and stats.soldout from Corsizio API.
-      const now = new Date();
-      const events = (await fetchEvents(env))
-        .filter(function(e) {
-          if (e.stats && e.stats.soldout === true) return false;
-          if (e.registrationCloseDate && new Date(e.registrationCloseDate) < now) return false;
-          return true;
-        })
-        .map(normalize);
+const events = (await fetchEvents(env)).map(normalize);
       // ── End filter ───────────────────────────────────────────────────────
       html = buildHtml(events, new Date());
     } catch (e) {
