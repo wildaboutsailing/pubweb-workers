@@ -11,7 +11,7 @@ compatibility_date = "2026-06-17"   # match was-dash-cal so the deploy stops war
 # with no KV and rate-limiting, caching, and the digest all break.
 [[kv_namespaces]]
 binding = "RATE_KV"
-id = "PASTE_ARTIE_RATE_NAMESPACE_ID_HERE"
+id = "7d95f41c51aa4e72a865d6f7195a92ad"
 
 # Daily digest. 15:00 UTC = ~8am Pacific (PDT) / 7am (PST). Change the hour to
 # retime it; it's UTC, so it drifts one hour across daylight saving.
