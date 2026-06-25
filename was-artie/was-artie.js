@@ -25,8 +25,7 @@
 //    QUO_API_KEY        Secret     Quo API key
 //    QUO_FROM           Variable   your Quo number, E.164
 //    TEAM_NUMBERS       Variable   cells to alert, comma-separated, E.164
-//    DIGEST_MAILER_URL  Secret     Apps Script /exec that emails the daily digest via Gmail
-//                                  (authenticated with the existing SHARED_SECRET)
+//    BREVO_API_KEY      Secret     Brevo transactional API key (sends the daily digest)
 // ===========================================================================
 
 const ALLOWED_ORIGINS = [
@@ -48,6 +47,8 @@ const RATE_WINDOW = 3600;
 const KB_TTL      = 600;   // knowledge cache (s)
 const SCHED_TTL   = 300;   // schedule cache (s)
 const LOG_TTL     = 259200; // daily-digest raw log retention (s) = 3 days
+const DIGEST_FROM = "noreply@wildaboutsailing.com"; // Brevo sender (domain is DKIM-verified)
+const DIGEST_TO   = "dave@wildaboutsailing.com";    // digest recipient
 const QUO_API     = "https://api.openphone.com/v1/messages";
 const CORSIZIO_BASE      = "https://api.corsizio.com/v1";
 const CORSIZIO_MAX_PAGES = 5;
@@ -242,9 +243,9 @@ async function summarizeDay(env, dayKey, entries) {
     return "Summary error. Totals: " + entries.length + " chats, " + handoffs + " hand-offs.";
   }
 }
-async function runDailyDigest(env) {
-  if (!env.DIGEST_MAILER_URL) { console.log("digest: DIGEST_MAILER_URL not set"); return; }
-  const dayKey = pacificDateKey(new Date(Date.now() - 24 * 3600 * 1000)); // the day that just ended (Pacific)
+async function runDailyDigest(env, dayKeyOverride) {
+  if (!env.BREVO_API_KEY) { console.log("digest: BREVO_API_KEY not set"); return; }
+  const dayKey = dayKeyOverride || pacificDateKey(new Date(Date.now() - 24 * 3600 * 1000)); // default: the day that just ended (Pacific)
   const entries = [];
   let cursor, pages = 0;
   do {
@@ -261,11 +262,17 @@ async function runDailyDigest(env) {
     ? ("No visitor chats were logged for " + dayKey + ".")
     : await summarizeDay(env, dayKey, entries);
   try {
-    await fetch(env.DIGEST_MAILER_URL, {
+    const r = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ secret: env.SHARED_SECRET, subject: subject, body: body }),
+      headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", "accept": "application/json" },
+      body: JSON.stringify({
+        sender: { name: "Artie Digest", email: DIGEST_FROM },
+        to: [{ email: DIGEST_TO }],
+        subject: subject,
+        textContent: body,
+      }),
     });
+    if (!r.ok) console.log("Brevo send failed", r.status, (await r.text()).slice(0, 300));
   } catch (e) { console.log("digest send err", e); }
 }
 
@@ -282,6 +289,18 @@ export default {
     if (body && body.lead) {
       ctx.waitUntil(handleLead(env, body.lead).catch(e => console.log("lead error", e)));
       return json({ ok: true }, 200, origin);
+    }
+
+    // Manual digest trigger (testing / on-demand). Gated by SHARED_SECRET.
+    // POST { "digestNow": true, "secret": "<SHARED_SECRET>", "day": "today" }
+    //   day: "today" = today's logs (Pacific) | "YYYY-MM-DD" = that day | omitted = yesterday.
+    if (body && body.digestNow) {
+      if (body.secret !== env.SHARED_SECRET) return json({ error: "forbidden" }, 403, origin);
+      const day = body.day === "today" ? pacificDateKey(new Date())
+        : (typeof body.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.day)) ? body.day
+        : undefined;
+      ctx.waitUntil(runDailyDigest(env, day));
+      return json({ ok: true, ran: "digest", day: day || "yesterday (default)" }, 200, origin);
     }
 
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
