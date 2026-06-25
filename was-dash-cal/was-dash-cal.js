@@ -19,7 +19,9 @@
  *     on this account (revenue), which is why fill ratios showed e.g. 2968/4
  *     and 44.8/4. Headcount is never a decimal: that was the tell.
  *   - getInstructors uses confirmed shape: instructors[].name
- *   - Registration close filter: excludes soldout and past-registrationCloseDate courses
+ *   - Sold-out / registration-close filtering REMOVED from this internal view:
+ *     it was hiding full courses (e.g. a 4/4 Women's course) and undercounting
+ *     the heatmap. That filter belongs on the public/Artie calendars, not here.
  */
 
 /* =======================================================================
@@ -655,15 +657,13 @@ export default {
 
     let html, status = 200;
     try {
-      // Registration close filter: exclude sold-out and past-registrationCloseDate courses.
-      const now = new Date();
-      const events = (await fetchEvents(env))
-        .filter(function(e) {
-          if (e.stats && e.stats.soldout === true) return false;
-          if (e.registrationCloseDate && new Date(e.registrationCloseDate) < now) return false;
-          return true;
-        })
-        .map(normalize);
+      // Internal staff dashboard: show EVERY published, upcoming course.
+      // Deliberately NO sold-out / registration-close filtering here — a full
+      // course still runs, still ties up a boat + instructor, and MUST count
+      // toward the heatmap. Hiding it would undercount real resource demand.
+      // (Registration-open filtering belongs on the PUBLIC bookable calendars
+      // and Artie, never on this internal view.)
+      const events = (await fetchEvents(env)).map(normalize);
       html = buildHtml(events, new Date());
     } catch (e) {
       html = buildErrorHtml(e.message);
