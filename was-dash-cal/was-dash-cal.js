@@ -12,6 +12,11 @@
  * (Use ?nocache=1 to see changes immediately.)
  *
  * ?debug=1 -> raw first Corsizio event   |   ?nocache=1 -> bypass edge cache
+ *
+ * FIXES (June 2026):
+ *   - getRegistered now uses confirmed field: stats.attendees
+ *   - getInstructors uses confirmed shape: instructors[].name
+ *   - Registration close filter: excludes soldout and past-registrationCloseDate courses
  */
 
 /* =======================================================================
@@ -61,22 +66,16 @@ function classify(name) {
   return t ? { key: t.key, label: t.label, color: t.color } : { key: 'other', label: 'Other', color: '#6B7280' };
 }
 
-// VERIFY: registration count key inside the stats object.
+// CONFIRMED field: stats.attendees (verified via ?debug=1, June 2026)
 function getRegistered(ev) {
-  const s = ev.stats || {};
-  const flat = [s.active, s.registered, s.registrations, s.attendees, s.count, s.spotsTaken, s.taken, s.total];
-  for (let i = 0; i < flat.length; i++) { if (typeof flat[i] === 'number') return flat[i]; }
-  if (s.registrations && typeof s.registrations.active === 'number') return s.registrations.active;
-  if (s.attendees && typeof s.attendees.active === 'number') return s.attendees.active;
-  return null;
+  return (ev.stats && ev.stats.attendees != null) ? ev.stats.attendees : 0;
 }
 function getMaxSpots(ev) { return (typeof ev.maxSpots === 'number') ? ev.maxSpots : null; }
 
-// VERIFY: expanded instructor object shape.
+// CONFIRMED shape: instructors[] array of objects with .name string (verified via ?debug=1, June 2026)
 function getInstructors(ev) {
-  const ins = ev.instructors;
-  if (!Array.isArray(ins)) return [];
-  return ins.map(function (i) {
+  if (!Array.isArray(ev.instructors)) return [];
+  return ev.instructors.map(function (i) {
     if (!i || typeof i === 'string') return null;
     return i.name || [i.firstName, i.lastName].filter(Boolean).join(' ') || null;
   }).filter(Boolean);
@@ -649,7 +648,18 @@ export default {
 
     let html, status = 200;
     try {
-      const events = (await fetchEvents(env)).map(normalize);
+      // ── Registration close filter ────────────────────────────────────────
+      // Exclude courses where sign-up is closed or the course is sold out.
+      // Uses registrationCloseDate and stats.soldout from Corsizio API.
+      const now = new Date();
+      const events = (await fetchEvents(env))
+        .filter(function(e) {
+          if (e.stats && e.stats.soldout === true) return false;
+          if (e.registrationCloseDate && new Date(e.registrationCloseDate) < now) return false;
+          return true;
+        })
+        .map(normalize);
+      // ── End filter ───────────────────────────────────────────────────────
       html = buildHtml(events, new Date());
     } catch (e) {
       html = buildErrorHtml(e.message);
