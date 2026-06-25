@@ -14,7 +14,10 @@
  * ?debug=1 -> raw first Corsizio event   |   ?nocache=1 -> bypass edge cache
  *
  * FIXES (June 2026):
- *   - getRegistered now uses confirmed field: stats.attendees
+ *   - getRegistered FIXED: reads stats.attendees (the registered HEADCOUNT).
+ *     A prior edit used stats.paid + stats.pending — those are DOLLAR AMOUNTS
+ *     on this account (revenue), which is why fill ratios showed e.g. 2968/4
+ *     and 44.8/4. Headcount is never a decimal: that was the tell.
  *   - getInstructors uses confirmed shape: instructors[].name
  *   - Registration close filter: excludes soldout and past-registrationCloseDate courses
  */
@@ -66,14 +69,13 @@ function classify(name) {
   return t ? { key: t.key, label: t.label, color: t.color } : { key: 'other', label: 'Other', color: '#6B7280' };
 }
 
-// CONFIRMED field: stats.attendees (verified via ?debug=1, June 2026)
+// FIXED: registered HEADCOUNT is stats.attendees (confirmed via ?debug=1).
+// Do NOT use stats.paid / stats.pending here — on this account those are
+// DOLLAR AMOUNTS (revenue), not people. Return null when the field is absent
+// so a misread surfaces as "?/cap" rather than a misleading "0/cap".
 function getRegistered(ev) {
   const s = ev.stats || {};
-  // paid = confirmed registrations, pending = awaiting payment
-  // attendees = post-event attended count (always 0 for future courses)
-  const paid = typeof s.paid === 'number' ? s.paid : 0;
-  const pending = typeof s.pending === 'number' ? s.pending : 0;
-  return paid + pending;
+  return typeof s.attendees === 'number' ? s.attendees : null;
 }
 function getMaxSpots(ev) { return (typeof ev.maxSpots === 'number') ? ev.maxSpots : null; }
 
@@ -653,11 +655,15 @@ export default {
 
     let html, status = 200;
     try {
-      // ── Registration close filter ────────────────────────────────────────
-      // Exclude courses where sign-up is closed or the course is sold out.
-      // Uses registrationCloseDate and stats.soldout from Corsizio API.
-const events = (await fetchEvents(env)).map(normalize);
-      // ── End filter ───────────────────────────────────────────────────────
+      // Registration close filter: exclude sold-out and past-registrationCloseDate courses.
+      const now = new Date();
+      const events = (await fetchEvents(env))
+        .filter(function(e) {
+          if (e.stats && e.stats.soldout === true) return false;
+          if (e.registrationCloseDate && new Date(e.registrationCloseDate) < now) return false;
+          return true;
+        })
+        .map(normalize);
       html = buildHtml(events, new Date());
     } catch (e) {
       html = buildErrorHtml(e.message);
