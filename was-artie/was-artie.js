@@ -25,7 +25,8 @@
 //    QUO_API_KEY        Secret     Quo API key
 //    QUO_FROM           Variable   your Quo number, E.164
 //    TEAM_NUMBERS       Variable   cells to alert, comma-separated, E.164
-//
+//    DIGEST_MAILER_URL  Secret     Apps Script /exec that emails the daily digest via Gmail
+//                                  (authenticated with the existing SHARED_SECRET)
 // ===========================================================================
 
 const ALLOWED_ORIGINS = [
@@ -46,6 +47,7 @@ const RATE_LIMIT  = 30;
 const RATE_WINDOW = 3600;
 const KB_TTL      = 600;   // knowledge cache (s)
 const SCHED_TTL   = 300;   // schedule cache (s)
+const LOG_TTL     = 259200; // daily-digest raw log retention (s) = 3 days
 const QUO_API     = "https://api.openphone.com/v1/messages";
 const CORSIZIO_BASE      = "https://api.corsizio.com/v1";
 const CORSIZIO_MAX_PAGES = 5;
@@ -167,6 +169,21 @@ function formatSchedule(events) {
   }).join("\n");
 }
 
+// Pull schedule lines whose course name matches the page's data-context, so the
+// worker can pin them as "lead with these" rather than relying on the model to
+// find them in the full list.
+function matchingScheduleLines(scheduleText, ctx) {
+  if (!ctx || !scheduleText) return [];
+  var norm = function (s) { return String(s).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim(); };
+  var needle = norm(ctx);
+  if (!needle) return [];
+  return scheduleText.split("\n").filter(function (line) {
+    if (line.charAt(0) !== "-") return false;
+    var name = norm(line.replace(/^-\s*/, "").split(" | ")[0]);
+    return name && (name.indexOf(needle) !== -1 || needle.indexOf(name) !== -1);
+  });
+}
+
 async function getSchedule(env) {
   try { const c = await env.RATE_KV.get("artie_schedule"); if (c) return c; }
   catch (e) { console.log("sched read err", e); }
@@ -176,6 +193,80 @@ async function getSchedule(env) {
     try { await env.RATE_KV.put("artie_schedule", text, { expirationTtl: SCHED_TTL }); } catch (e) {}
     return text;
   } catch (e) { console.log("sched err", e); return ""; }
+}
+
+/* ---- Daily digest (Cron -> Claude summary -> Gmail relay) ----------------- */
+// Strip the obvious PII before anything is stored. Heuristic but high-precision
+// for emails and phone numbers; names are simply never stored.
+function scrubPII(s) {
+  return String(s == null ? "" : s)
+    .replace(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g, "[email]")
+    .replace(/\+?\d[\d\s().\-]{7,}\d/g, "[phone]")
+    .slice(0, 300);
+}
+function pacificDateKey(d) {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Vancouver", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  } catch (e) { return d.toISOString().slice(0, 10); }
+}
+async function summarizeDay(env, dayKey, entries) {
+  let handoffs = 0;
+  const lines = entries.map(function (e) {
+    if (e.handoff) handoffs++;
+    return "- [" + (e.tag || "?") + (e.page ? " | " + e.page : "") + "] Q: " + e.q + " | A: " + e.a;
+  }).join("\n").slice(0, 12000);
+  const prompt =
+    "You are writing a short internal digest of one day of ANONYMOUS visitor chats with Artie, "
+    + "the chat assistant for Wild About Sailing (a sailing school). It is for the owner's eyes only.\n\n"
+    + "STRICT: aggregate only. Never include names, emails, phone numbers, or any identifying detail; "
+    + "no verbatim quotes that could identify a person. If an entry contains such a detail, ignore that detail.\n\n"
+    + "Write scannable plain text, under ~300 words, covering:\n"
+    + "1. Volume + a one-line read on the day.\n"
+    + "2. Top 3-5 topics people asked about.\n"
+    + "3. Most common or notable questions (paraphrased).\n"
+    + "4. Hand-off rate and what seemed to drive people to want a human.\n"
+    + "5. KNOWLEDGE GAPS - questions Artie answered poorly or couldn't answer, i.e. what to add to the knowledge Doc. Be specific; this is the most useful section.\n\n"
+    + "Date: " + dayKey + ". Totals: " + entries.length + " chats, " + handoffs + " hand-offs.\n\n"
+    + "ENTRIES:\n" + lines;
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: MODEL, max_tokens: 700, messages: [{ role: "user", content: prompt }] }),
+    });
+    if (!r.ok) return "Summary call failed (" + r.status + "). Totals: " + entries.length + " chats, " + handoffs + " hand-offs.";
+    const data = await r.json();
+    const text = (data.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n").trim();
+    return text || ("Totals: " + entries.length + " chats, " + handoffs + " hand-offs.");
+  } catch (e) {
+    return "Summary error. Totals: " + entries.length + " chats, " + handoffs + " hand-offs.";
+  }
+}
+async function runDailyDigest(env) {
+  if (!env.DIGEST_MAILER_URL) { console.log("digest: DIGEST_MAILER_URL not set"); return; }
+  const dayKey = pacificDateKey(new Date(Date.now() - 24 * 3600 * 1000)); // the day that just ended (Pacific)
+  const entries = [];
+  let cursor, pages = 0;
+  do {
+    const res = await env.RATE_KV.list({ prefix: "log:" + dayKey + ":", cursor: cursor });
+    for (let i = 0; i < res.keys.length; i++) {
+      try { const v = await env.RATE_KV.get(res.keys[i].name); if (v) entries.push(JSON.parse(v)); } catch (e) {}
+    }
+    cursor = res.list_complete ? null : res.cursor;
+    pages++;
+  } while (cursor && pages < 10);
+
+  const subject = "Artie daily digest \u2014 " + dayKey + " (" + entries.length + " chats)";
+  const body = entries.length === 0
+    ? ("No visitor chats were logged for " + dayKey + ".")
+    : await summarizeDay(env, dayKey, entries);
+  try {
+    await fetch(env.DIGEST_MAILER_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ secret: env.SHARED_SECRET, subject: subject, body: body }),
+    });
+  } catch (e) { console.log("digest send err", e); }
 }
 
 export default {
@@ -224,9 +315,18 @@ export default {
     const cachedBlock = SYSTEM_PROMPT + "\n\nKNOWLEDGE:\n" +
       (knowledge || "(knowledge temporarily unavailable \u2014 offer to connect them with Dave or Annalise)");
 
-    const contextLine = pageContext
-      ? `PAGE CONTEXT: The visitor is on the "${pageContext}" page. Lead with information about this course if relevant, but answer whatever they actually ask.\n\n`
-      : "";
+    let contextLine = "";
+    if (pageContext) {
+      const hits = matchingScheduleLines(schedule, pageContext);
+      const focus = hits.length
+        ? ("MATCHING SESSION(S) for this page \u2014 lead with these:\n" + hits.join("\n") + "\n\n")
+        : "";
+      contextLine =
+        "PAGE CONTEXT: The visitor is on the \"" + pageContext + "\" page, so that course is almost certainly what they're asking about. "
+        + "When they ask about courses, dates, price, or availability without naming a different course, answer about \"" + pageContext + "\" FIRST \u2014 do not default to the next thing on the calendar. "
+        + "Only bring up other courses if they ask to compare, or if this one has nothing open (then say so and offer the nearest alternative). Still answer any specific question they actually ask.\n"
+        + focus;
+    }
 
     const scheduleBlock = contextLine +
       "CURRENT SCHEDULE \u2014 live from Corsizio, may be a few minutes out of date. The registration page is always the final word on availability and booking.\n" +
@@ -263,7 +363,35 @@ export default {
       handoff = true;
       replyText = replyText.replace(/<<HANDOFF>>/g, "").trim();
     }
+
+    // --- daily-digest logging: scrubbed, short-lived, no PII -----------------
+    // Stored only to feed the once-a-day overview; emails/phones are stripped,
+    // names are never stored, and entries self-delete after LOG_TTL.
+    try {
+      let lastUserMsg = "";
+      for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].role === "user") { lastUserMsg = messages[i].content; break; } }
+      const tag = handoff ? "handoff"
+        : /corsizio\.com\/register|spots?\s+left|sold\s*out/i.test(replyText) ? "schedule"
+        : /isn't currently listed|not currently listed|can't answer|don't know|not sure/i.test(replyText) ? "unanswered"
+        : "answered";
+      const entry = {
+        ts: new Date().toISOString(),
+        page: pageContext || "",
+        q: scrubPII(lastUserMsg),
+        a: scrubPII(replyText),
+        tag: tag,
+        handoff: handoff,
+      };
+      const logKey = "log:" + pacificDateKey(new Date()) + ":" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+      ctx.waitUntil(env.RATE_KV.put(logKey, JSON.stringify(entry), { expirationTtl: LOG_TTL }));
+    } catch (e) { console.log("log err", e); }
+
     return json({ reply: replyText, handoff }, 200, origin);
+  },
+
+  // Cron Trigger (set in wrangler.toml). Builds yesterday's digest and emails it.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runDailyDigest(env));
   },
 };
 
@@ -307,4 +435,3 @@ async function handleLead(env, lead) {
     });
   }
 }
-

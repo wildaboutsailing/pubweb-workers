@@ -4,23 +4,24 @@
 # Worker (and keeps its secrets), instead of spawning a new one.
 name = "was-artie"
 main = "was-artie.js"
-compatibility_date = "2026-06-17"  # match was-dash-cal's value if you want them identical
+compatibility_date = "2026-06-17"   # match was-dash-cal so the deploy stops warning
 
-# Rate-limiting + the knowledge/schedule cache live in KV. This binding MUST be
-# declared here — if it's missing, the GitHub build deploys Artie WITHOUT it and
-# rate-limiting and the 5-min schedule cache both break (and getSchedule throws).
-# `binding` must equal what the code reads (env.RATE_KV); `id` is the ARTIE_RATE
-# namespace ID (an identifier, not a secret — safe to commit).
+# Rate-limiting, the knowledge/schedule cache, AND the daily-digest log all live
+# in KV. This binding MUST be declared here — without it the build deploys Artie
+# with no KV and rate-limiting, caching, and the digest all break.
 [[kv_namespaces]]
 binding = "RATE_KV"
-id = "7d95f41c51aa4e72a865d6f7195a92ad"
+id = "PASTE_ARTIE_RATE_NAMESPACE_ID_HERE"
 
+# Daily digest. 15:00 UTC = ~8am Pacific (PDT) / 7am (PST). Change the hour to
+# retime it; it's UTC, so it drifts one hour across daylight saving.
+[triggers]
+crons = ["0 15 * * *"]
 
-# Deliberately NO [vars] block. Everything Artie reads from env — the four
-# secrets it already had (ANTHROPIC_API_KEY, CORSIZIO_API_KEY, QUO_API_KEY,
-# SHARED_SECRET) plus the four promoted ones (APPS_SCRIPT_URL, KNOWLEDGE_URL,
-# QUO_FROM, TEAM_NUMBERS) — is an encrypted Secret set in the dashboard.
-# Secrets survive deploys and never touch the repo. That's what keeps this public.
-
+# Keep Artie's console.log visible for debugging.
 [observability]
 enabled = true
+
+# No [vars] block on purpose — every env value (the original four secrets, the
+# four promoted ones, plus DIGEST_MAILER_URL) is an encrypted Secret in the
+# dashboard. Secrets survive deploys and never touch the repo.
