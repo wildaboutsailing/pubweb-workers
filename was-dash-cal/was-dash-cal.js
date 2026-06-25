@@ -68,7 +68,12 @@ function classify(name) {
 
 // CONFIRMED field: stats.attendees (verified via ?debug=1, June 2026)
 function getRegistered(ev) {
-  return (ev.stats && ev.stats.attendees != null) ? ev.stats.attendees : 0;
+  const s = ev.stats || {};
+  // paid = confirmed registrations, pending = awaiting payment
+  // attendees = post-event attended count (always 0 for future courses)
+  const paid = typeof s.paid === 'number' ? s.paid : 0;
+  const pending = typeof s.pending === 'number' ? s.pending : 0;
+  return paid + pending;
 }
 function getMaxSpots(ev) { return (typeof ev.maxSpots === 'number') ? ev.maxSpots : null; }
 
