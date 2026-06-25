@@ -343,7 +343,7 @@ a{color:inherit}
 </div>
 <div class="modal" id="modal" hidden></div>
 `;
-  const script = '<script>var EVENTS=' + data + ';var CONFIG=' + cfg + ';var GENERATED=' + gen + ';(' + clientMain.toString() + ')();<\/script>';
+  const script = '<script>var __name=function(f,n){return f};var EVENTS=' + data + ';var CONFIG=' + cfg + ';var GENERATED=' + gen + ';(' + clientMain.toString() + ')();<\/script>';
   return head + script + '</body></html>';
 }
 
