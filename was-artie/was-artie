@@ -25,6 +25,7 @@
 //    QUO_API_KEY        Secret     Quo API key
 //    QUO_FROM           Variable   your Quo number, E.164
 //    TEAM_NUMBERS       Variable   cells to alert, comma-separated, E.164
+//
 // ===========================================================================
 
 const ALLOWED_ORIGINS = [
