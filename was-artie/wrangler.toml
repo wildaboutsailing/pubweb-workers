@@ -15,6 +15,7 @@ compatibility_date = "2024-01-01"   # match was-dash-cal's value if you want the
 binding = "RATE_KV"
 id = "7d95f41c51aa4e72a865d6f7195a92ad"
 
+
 # Deliberately NO [vars] block. Everything Artie reads from env — the four
 # secrets it already had (ANTHROPIC_API_KEY, CORSIZIO_API_KEY, QUO_API_KEY,
 # SHARED_SECRET) plus the four promoted ones (APPS_SCRIPT_URL, KNOWLEDGE_URL,
