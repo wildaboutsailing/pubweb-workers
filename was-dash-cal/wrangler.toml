@@ -1,3 +1,5 @@
-tomlname = "was-dash-cal"
+toml
+
+name = "was-dash-cal"
 main = "was-dash-cal.js"
 compatibility_date = "2024-01-01"
