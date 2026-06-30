@@ -1,8 +1,6 @@
-# pubweb-workers/<folder>/wrangler.toml
-name = "PUT_EXACT_WORKER_NAME_HERE"
-main = "PUT_MATCHING_FILENAME.js"
-compatibility_date = "PUT_THE_DATE_HERE"
+name = "corzisio-worker-learn-datesandspots"
+main = "corzisio-worker-learn-datesandspots.js"
+compatibility_date = "2026-06-04"
 
 [observability]
 enabled = true
-
