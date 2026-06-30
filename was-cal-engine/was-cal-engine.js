@@ -461,7 +461,13 @@ export default {
 
     document.getElementById(P+"v1-pick").addEventListener("click", function() { openCal(currentCourse); });
 
-    document.getElementById(P+"v2-back").addEventListener("click", function() { showView("v1"); });
+    document.getElementById(P+"v2-back").addEventListener("click", function() {
+      // The Details view may never have been populated if the user entered
+      // straight into the calendar (via the page's Pick a Date button), so
+      // always (re)populate it with the current course before showing it.
+      if (currentCourse) openDetails(currentCourse);
+      else showView("v1");
+    });
     document.getElementById(P+"v2-prev").addEventListener("click", function() {
       modalCalMonth--; if (modalCalMonth<0) { modalCalMonth=11; modalCalYear--; }
       modalSelected = null;
