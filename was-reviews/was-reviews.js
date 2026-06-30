@@ -78,7 +78,7 @@ export default {
     const rating    = placeData.rating || 0;
     const total     = placeData.user_ratings_total || 0;
     const googleUrl = placeData.url || "https://g.page/r/CQywUh8hv_X0EAE";
-    const reviews   = (placeData.reviews || []).slice(0, 5);
+    const reviews   = (placeData.reviews || []).slice(0, 4);
 
     // Sanitise review data — escape backslashes and quotes, strip control chars
     const sanitise = (str) => String(str || "")
