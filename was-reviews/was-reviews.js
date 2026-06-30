@@ -3,7 +3,8 @@
  * Cloudflare Worker v2
  *
  * Fetches reviews from Google Places API and serves a branded JS widget.
- * API key is kept server-side — never exposed to the browser.
+ * API key is read server-side from the GOOGLE_PLACES_API_KEY secret —
+ * never hardcoded, never exposed to the browser.
  *
  * Usage: <div id="was-reviews-root"></div>
  *        <script src="https://was-reviews.dave-6bf.workers.dev/"></script>
@@ -12,7 +13,6 @@
  */
 
 const PLACE_ID   = "ChIJCYMv_P2_KSURDLBSHyG_9fQ";
-const API_KEY    = "AIzaSyDt4dbh2I4pv2Hpz11bvnc1R9YTIxPSYTk";
 const NAVY       = "#1a1a3e";
 const RED        = "#DC3C32";
 const SKY        = "#BEDCE6";
@@ -41,6 +41,10 @@ export default {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders() });
     }
+
+    // Read the API key from the encrypted secret — must be INSIDE the handler,
+    // because `env` only exists here (it's a parameter of fetch()).
+    const API_KEY  = env.GOOGLE_PLACES_API_KEY;
 
     const url      = new URL(request.url);
     const cache    = caches.default;
