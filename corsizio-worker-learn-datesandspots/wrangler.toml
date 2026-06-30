@@ -1,0 +1,6 @@
+name = "corsizio-worker-learn-datesandspots"
+main = "corsizio-worker-learn-datesandspots.js"
+compatibility_date = "2026-06-02"
+
+[observability]
+enabled = true
