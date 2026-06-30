@@ -1,0 +1,8 @@
+# pubweb-workers/was-faqs/wrangler.toml
+name = "was-faqs"
+main = "was-faqs.js"
+compatibility_date = "2026-06-17"
+
+# Keep console.log visible if you ever need to debug.
+[observability]
+enabled = true
