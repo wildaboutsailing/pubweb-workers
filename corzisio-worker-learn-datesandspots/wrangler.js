@@ -5,3 +5,4 @@ compatibility_date = "PUT_THE_DATE_HERE"
 
 [observability]
 enabled = true
+
