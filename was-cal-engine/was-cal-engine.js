@@ -68,17 +68,6 @@ export default {
       return anyMultiDay() ? "Pick Dates" : "Pick a Date";
     }
 
-    function courseCoversDay(c, y, mo, da) {
-      if (!c) return false;
-      var start = new Date(c.startDate), end = new Date(c.endDate);
-      var endDay = new Date(end);
-      if (end.getUTCHours()===0 && end.getUTCMinutes()===0 && end.getUTCSeconds()===0) endDay.setUTCDate(endDay.getUTCDate()-1);
-      var cell = Date.UTC(y, mo, da);
-      var s = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
-      var e = Date.UTC(endDay.getUTCFullYear(), endDay.getUTCMonth(), endDay.getUTCDate());
-      return cell >= s && cell <= e;
-    }
-
     function courseKey(c) {
       if (!c) return "";
       if (c.id) return String(c.id);
@@ -142,6 +131,12 @@ export default {
              " \u2013 "+da[ed.getUTCDay()]+" "+mo[ed.getUTCMonth()]+" "+ed.getUTCDate()+", "+ed.getUTCFullYear();
     }
 
+    // Single source of truth for "which course(s) occupy this calendar day".
+    // Each day-key maps to an ARRAY of {course, type} entries — using an
+    // array (not first-write-wins) means overlapping courses never clobber
+    // each other, and this same map drives BOTH the dot colour AND the
+    // whole-course-highlight selection, so there is only one place that
+    // decides day/course membership.
     function dmap() {
       var map = {}, now = new Date();
       courses.forEach(function(c) {
@@ -150,17 +145,33 @@ export default {
         var endDay = new Date(end);
         if (end.getUTCHours()===0 && end.getUTCMinutes()===0 && end.getUTCSeconds()===0) endDay.setUTCDate(endDay.getUTCDate()-1);
         var sk = start.getUTCFullYear()+"-"+start.getUTCMonth()+"-"+start.getUTCDate();
-        if (!map[sk]) map[sk] = { course: c, type: "start" };
+        (map[sk] = map[sk] || []).push({ course: c, type: "start" });
         var cur = new Date(start); cur.setUTCDate(cur.getUTCDate()+1);
         while (cur.getUTCFullYear()<endDay.getUTCFullYear() ||
           (cur.getUTCFullYear()===endDay.getUTCFullYear() && cur.getUTCMonth()<endDay.getUTCMonth()) ||
           (cur.getUTCFullYear()===endDay.getUTCFullYear() && cur.getUTCMonth()===endDay.getUTCMonth() && cur.getUTCDate()<=endDay.getUTCDate())) {
           var ck = cur.getUTCFullYear()+"-"+cur.getUTCMonth()+"-"+cur.getUTCDate();
-          if (!map[ck]) map[ck] = { course: c, type: "cont" };
+          (map[ck] = map[ck] || []).push({ course: c, type: "cont" });
           cur.setUTCDate(cur.getUTCDate()+1);
         }
       });
       return map;
+    }
+
+    // The single entry used to colour a day's dot when nothing is selected:
+    // prefer a "start" entry (so the start day always shows navy), else the
+    // first "cont" entry on that day.
+    function primaryEntry(entries) {
+      if (!entries || !entries.length) return null;
+      for (var i = 0; i < entries.length; i++) if (entries[i].type === "start") return entries[i];
+      return entries[0];
+    }
+
+    // True if ANY entry for this day belongs to the given course key.
+    function dayHasCourse(entries, key) {
+      if (!entries || !key) return false;
+      for (var i = 0; i < entries.length; i++) if (courseKey(entries[i].course) === key) return true;
+      return false;
     }
 
     // Find the first upcoming course start date key
@@ -417,11 +428,13 @@ export default {
       for (var i = 0; i < fd; i++) html += '<div></div>';
       for (var d = 1; d <= dim; d++) {
         var k       = modalCalYear+"-"+modalCalMonth+"-"+d;
-        var entry   = map[k];
+        var entries = map[k];                 // array, may hold >1 course on overlap days
+        var entry   = primaryEntry(entries);   // the one used for colour when not selected
         var isToday = d===today.getDate() && modalCalMonth===today.getMonth() && modalCalYear===today.getFullYear();
-        // A cell is "selected" if its course matches the selected course key,
-        // so EVERY day of a multi-day course highlights together.
-        var isSel   = selectedCourse && courseCoversDay(selectedCourse, modalCalYear, modalCalMonth, d);
+        // A cell is "selected" — and goes red — if ANY course on that day
+        // matches the selected course key. Same dmap() array drives both
+        // the dot colour above and this highlight check: one source of truth.
+        var isSel   = dayHasCourse(entries, modalSelected);
         var bg    = isSel ? RED : (entry&&entry.type==="start" ? NAVY : (entry&&entry.type==="cont" ? SKY : "transparent"));
         var color = isSel ? "#fff" : (entry&&entry.type==="start" ? "#fff" : (entry&&entry.type==="cont" ? NAVY : (isToday ? NAVY : "#444")));
         var fw    = (entry||isToday) ? "700" : "400";
@@ -430,7 +443,7 @@ export default {
       var grid = document.getElementById(P+"v2-grid");
       grid.innerHTML = html;
       grid.querySelectorAll("[data-mk]").forEach(function(cell) {
-        var k = cell.getAttribute("data-mk"), entry = map[k];
+        var k = cell.getAttribute("data-mk"), entries = map[k], entry = primaryEntry(entries);
         if (!entry) return;
         cell.addEventListener("click", function() {
           // Select the whole COURSE, not just the clicked day.
@@ -536,7 +549,11 @@ export default {
     return new Response(js, {
       headers: {
         "Content-Type": "application/javascript",
-        "Access-Control-Allow-Origin": "*"
+        "Access-Control-Allow-Origin": "*",
+        // No long-lived caching: every page load asks the edge for the
+        // latest engine, so a deploy here goes live everywhere immediately —
+        // no more bumping ?v= on every embedding site after a change.
+        "Cache-Control": "no-cache, must-revalidate"
       }
     });
   }
