@@ -48,7 +48,7 @@ export default {
 
     const url      = new URL(request.url);
     const cache    = caches.default;
-    const cacheKey = new Request("https://was-reviews-cache/reviews-v2");
+    const cacheKey = new Request("https://was-reviews-cache/reviews-v3");
 
     // Serve from cache unless ?nocache=1
     if (!url.searchParams.get("nocache")) {
