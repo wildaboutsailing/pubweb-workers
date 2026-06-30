@@ -48,6 +48,26 @@ export default {
     // ── Course key helper ──────────────────────────────────────────────────
     // Stable identifier for a course so every one of its day-cells can be
     // matched together. Prefer the Corsizio id; fall back to startDate+name.
+    function isMultiDay(c) {
+      if (!c) return false;
+      var start = new Date(c.startDate), end = new Date(c.endDate);
+      var endDay = new Date(end);
+      if (end.getUTCHours()===0 && end.getUTCMinutes()===0 && end.getUTCSeconds()===0) endDay.setUTCDate(endDay.getUTCDate()-1);
+      return !(start.getUTCFullYear()===endDay.getUTCFullYear() &&
+               start.getUTCMonth()===endDay.getUTCMonth() &&
+               start.getUTCDate()===endDay.getUTCDate());
+    }
+
+    // True if ANY loaded course spans more than one day.
+    function anyMultiDay() {
+      return courses.some(isMultiDay);
+    }
+
+    // Label for the pick buttons, based on whether any course is multi-day.
+    function pickLabel() {
+      return anyMultiDay() ? "Pick Dates" : "Pick a Date";
+    }
+
     function courseCoversDay(c, y, mo, da) {
       if (!c) return false;
       var start = new Date(c.startDate), end = new Date(c.endDate);
@@ -231,7 +251,7 @@ export default {
     root.innerHTML =
       '<div id="'+P+'btns">' +
         '<button id="'+P+'details-btn">'+infoIcon+' SEE DETAILS</button>' +
-        '<button id="'+P+'btn">'+calIcon+' PICK A DATE</button>' +
+        '<button id="'+P+'btn">'+calIcon+' <span id="'+P+'btn-label">PICK A DATE</span></button>' +
       '</div>' +
       '<div id="'+P+'wrap">' +
         '<div class="cal-grid" id="'+P+'grid"></div>' +
@@ -257,7 +277,7 @@ export default {
           '<div id="'+P+'v1-scroll-hint"></div>' +
           '<div id="'+P+'v1-foot">' +
             '<button id="'+P+'v1-more" class="">See more \u2193</button>' +
-            '<button id="'+P+'v1-pick" class="'+P+'br">'+calIcon+' Pick a Date</button>' +
+            '<button id="'+P+'v1-pick" class="'+P+'br">'+calIcon+' <span id="'+P+'v1-pick-label">Pick a Date</span></button>' +
           '</div>' +
         '</div>' +
 
@@ -485,6 +505,12 @@ export default {
           return true;
         });
         document.getElementById(P+"loading").style.display = "none";
+        // Update pick-button labels now that we know the course durations.
+        var lbl = pickLabel();
+        var pageLbl  = document.getElementById(P+"btn-label");
+        if (pageLbl) pageLbl.textContent = lbl.toUpperCase();
+        var v1Lbl = document.getElementById(P+"v1-pick-label");
+        if (v1Lbl) v1Lbl.textContent = lbl;
       })
       .catch(function() {
         var el = document.getElementById(P+"loading");
@@ -515,5 +541,3 @@ export default {
     });
   }
 };
-
-
