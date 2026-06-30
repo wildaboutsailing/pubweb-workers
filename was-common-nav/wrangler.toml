@@ -1,7 +1,7 @@
 # pubweb-workers/was-common-nav/wrangler.toml
 name = "was-common-nav"
 main = "was-common-nav.js"
-compatibility_date = "PUT_THE_DATE_HERE"   # Settings → Runtime, as YYYY-MM-DD
+compatibility_date = "2026-06-17"   # Settings → Runtime, as YYYY-MM-DD
 
 [observability]
 enabled = true
