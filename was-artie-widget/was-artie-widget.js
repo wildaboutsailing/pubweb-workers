@@ -1,403 +1,391 @@
-var __defProp = Object.defineProperty;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+// ===========================================================================
+//  was-artie-widget-worker.js — Cloudflare Worker that serves the Artie
+//  chat-widget JavaScript to the browser.
+//  Wild About Sailing
+// ===========================================================================
+//
+//  This is the WORKER itself (server-side, runs in Cloudflare's isolate).
+//  It does ONE thing: respond to GET / with the widget's JavaScript as the
+//  response body, so a Carrd <script src="...workers.dev/"> tag can load it.
+//
+//  The widget code below (WIDGET_SOURCE) is what actually RUNS IN THE
+//  VISITOR'S BROWSER — it uses `document`, `window`, etc., which only exist
+//  client-side. It must stay inside this template string; it must never be
+//  deployed as the Worker's own top-level code (that throws
+//  "document is not defined" — Workers have no DOM).
+//
+//  DEPLOY: Cloudflare dashboard -> was-artie-widget -> Edit code -> paste
+//  this whole file -> Save and Deploy. (Or commit to the was-artie-widget/
+//  subfolder in the monorepo as was-artie-widget.js, matching its
+//  wrangler.toml: main = "was-artie-widget.js".)
+// ===========================================================================
 
-// was-artie.js
-var ALLOWED_ORIGINS = [
-  "https://wildaboutsailing.com",
-  "https://www.wildaboutsailing.com",
-  "https://learntosail.wildaboutsailing.com",
-  "https://discover.wildaboutsailing.com",
-  "https://women.wildaboutsailing.com",
-  "https://navigation.wildaboutsailing.com",
-  "https://artie-test.wildaboutsailing.com",
-  "https://artie.wildaboutsailing.com"
-];
-var MODEL = "claude-haiku-4-5-20251001";
-var MAX_TOKENS = 450;
-var MAX_TURNS = 24;
-var RATE_LIMIT = 30;
-var RATE_WINDOW = 3600;
-var KB_TTL = 600;
-var SCHED_TTL = 300;
-var LOG_TTL = 259200;
-var DIGEST_FROM = "noreply@wildaboutsailing.com";
-var DIGEST_TO = "dave@wildaboutsailing.com";
-var QUO_API = "https://api.openphone.com/v1/messages";
-var CORSIZIO_BASE = "https://api.corsizio.com/v1";
-var CORSIZIO_MAX_PAGES = 5;
-var SYSTEM_PROMPT = `You are "First Mate Artie," the friendly AI assistant for Wild About Sailing (WAS), a Sail Canada-accredited sailing school at Canoe Cove Marina, North Saanich BC.
-
-VOICE: Warm, encouraging, lightly nautical but never corny. Keep replies short \u2014 usually 2-4 sentences, sized for a small chat window. You are a knowledgeable first mate, not a salesperson.
-
-FORMAT: The chat window is small, so keep answers brief and easy to skim. You may use **bold** sparingly and [label](url) for links (the chat renders them as clean clickable links). Never paste long bare URLs \u2014 always wrap them as a short label like [Register](url). Avoid long lists or walls of text; don't dump every option at once.
-
-HUMOR: Your knowledge includes a sheet of family-rated pirate, sailor, and dad jokes. A light, well-timed joke suits the WAS spirit, but humor is seasoning, not the meal:
-- Help first \u2014 a short joke can follow a useful answer, never replace it, and never before you've been useful.
-- Keep it rare: an occasional one-liner at most, never two in a row; most replies have none.
-- Good moments: when someone asks for a joke, when the visitor is clearly being playful, or as a light sign-off once you've already helped them.
-- Stay straight-faced when the visitor seems frustrated or confused, is comparing prices, or is asking about cancellations, refunds, safety, or accessibility \u2014 and never joke while handing off to a human.
-- Draw from the joke sheet so they stay vetted and family-rated; vary them and keep them short. If in doubt, skip it.
-
-YOU HELP WITH: course options (Discover Sailing, Learn to Sail, Learn to Skipper, Women's Learn to Sail, 2SLGBTQIA+ Learn to Sail, Custom Coaching), what to expect on the water, what to bring, accommodation, getting to the marina, dates, prices, availability, and how to register.
-
-HARD RULES:
-- You MAY share specific dates, times, prices, and availability \u2014 but ONLY from the CURRENT SCHEDULE block. Never invent, estimate, or guess them. If a course or session isn't in the schedule, say it isn't currently listed and point them to the registration page.
-- When you share a session, give its Register link as a short [Register](url) link, never the bare URL. If several sessions are open, mention just the next one or two, then say more dates are available and offer to list the rest \u2014 don't paste them all at once.
-- A session marked SOLD OUT / registration CLOSED is NOT open for sign-up. Never give it a Register link and never tell the visitor to register for it. You may let them know it's full and offer to connect them with Dave or Annalise about a waitlist, or point them to the next open session instead.
-- Availability can change quickly and the schedule may be a few minutes old, so encourage booking promptly and note the registration page is the final word on spots.
-- For general course info (what to bring, what to expect, accommodation), use the KNOWLEDGE block.
-- If you don't know something, say so plainly and offer to connect them with Dave or Annalise.
-- If the visitor wants to talk to a person, asks something you can't answer, or seems frustrated, end your reply with the token <<HANDOFF>> on its own line. When you do, keep that reply to a short, warm hand-off line (e.g. "Let me get you connected with Dave or Annalise.") \u2014 do NOT print phone numbers, email addresses, or other contact details yourself; the chat shows the visitor those contact options automatically.
-- Stay welcoming and safe; you may be talking with beginners or with parents asking for kids.`;
-function corsHeaders(origin) {
-  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
-  return {
-    "Access-Control-Allow-Origin": allow,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Vary": "Origin"
-  };
-}
-__name(corsHeaders, "corsHeaders");
-function json(obj, status, origin) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "content-type": "application/json", ...corsHeaders(origin) }
-  });
-}
-__name(json, "json");
-async function getKnowledge(env) {
-  try {
-    const c = await env.RATE_KV.get("artie_knowledge");
-    if (c) return c;
-  } catch (e) {
-    console.log("KB read err", e);
-  }
-  if (!env.KNOWLEDGE_URL) return "";
-  try {
-    const r = await fetch(env.KNOWLEDGE_URL);
-    if (!r.ok) return "";
-    const t = await r.text();
-    try {
-      await env.RATE_KV.put("artie_knowledge", t, { expirationTtl: KB_TTL });
-    } catch (e) {
-    }
-    return t;
-  } catch (e) {
-    console.log("KB fetch err", e);
-    return "";
-  }
-}
-__name(getKnowledge, "getKnowledge");
-async function fetchCorsizioEvents(env) {
-  const key = env.CORSIZIO_API_KEY;
-  if (!key) return [];
-  const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const all = [];
-  for (let page = 1; page <= CORSIZIO_MAX_PAGES; page++) {
-    const url = CORSIZIO_BASE + "/events?status=published&order=startDate&date=" + today + ":&limit=100&page=" + page + "&include=details,stats&expand=instructors";
-    const r = await fetch(url, { headers: { Authorization: "Bearer " + key } });
-    if (!r.ok) {
-      console.log("Corsizio", r.status, (await r.text()).slice(0, 200));
-      break;
-    }
-    const data = await r.json();
-    const list = data.list || [];
-    for (let i = 0; i < list.length; i++) all.push(list[i]);
-    if (!data.paging || !data.paging.more) break;
-  }
-  return all;
-}
-__name(fetchCorsizioEvents, "fetchCorsizioEvents");
-function getRegistered(ev) {
-  const s = ev.stats || {};
-  return typeof s.attendees === "number" ? s.attendees : null;
-}
-__name(getRegistered, "getRegistered");
-function formatSchedule(events) {
-  const now = Date.now();
-  const open = events.filter(
-    (e) => e && e.status === "published" && (!e.registrationCloseDate || new Date(e.registrationCloseDate).getTime() > now)
-  );
-  if (open.length === 0) return "No sessions are currently open for registration. Direct people to the registration page.";
-  open.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
-  return open.map((e) => {
-    const reg = getRegistered(e);
-    const max = typeof e.maxSpots === "number" ? e.maxSpots : null;
-    const sold = e.stats && e.stats.soldout || max != null && reg != null && reg >= max;
-    const cur = (e.currency || "").toUpperCase();
-    const price = e.priceFrom === e.priceTo ? `$${e.priceFrom} ${cur}` : `$${e.priceFrom}\u2013$${e.priceTo} ${cur}`;
-    if (sold) {
-      return `- ${e.name} | ${e.displayDate} | ${price} | SOLD OUT \u2014 registration CLOSED (no register link; offer a waitlist via hand-off instead)`;
-    }
-    const avail = max != null && reg != null ? `${max - reg} of ${max} spots left` : max != null ? `up to ${max} spots` : "spots available";
-    return `- ${e.name} | ${e.displayDate} | ${price} | ${avail} | Register: ${e.formUrl}`;
-  }).join("\n");
-}
-__name(formatSchedule, "formatSchedule");
-function matchingScheduleLines(scheduleText, ctx) {
-  if (!ctx || !scheduleText) return [];
-  var norm = /* @__PURE__ */ __name(function(s) {
-    return String(s).toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-  }, "norm");
-  var needle = norm(ctx);
-  if (!needle) return [];
-  return scheduleText.split("\n").filter(function(line) {
-    if (line.charAt(0) !== "-") return false;
-    var name = norm(line.replace(/^-\s*/, "").split(" | ")[0]);
-    return name && (name.indexOf(needle) !== -1 || needle.indexOf(name) !== -1);
-  });
-}
-__name(matchingScheduleLines, "matchingScheduleLines");
-async function getSchedule(env) {
-  try {
-    const c = await env.RATE_KV.get("artie_schedule");
-    if (c) return c;
-  } catch (e) {
-    console.log("sched read err", e);
-  }
-  try {
-    const events = await fetchCorsizioEvents(env);
-    const text = formatSchedule(events);
-    try {
-      await env.RATE_KV.put("artie_schedule", text, { expirationTtl: SCHED_TTL });
-    } catch (e) {
-    }
-    return text;
-  } catch (e) {
-    console.log("sched err", e);
-    return "";
-  }
-}
-__name(getSchedule, "getSchedule");
-function scrubPII(s) {
-  return String(s == null ? "" : s).replace(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g, "[email]").replace(/\+?\d[\d\s().\-]{7,}\d/g, "[phone]").slice(0, 300);
-}
-__name(scrubPII, "scrubPII");
-function pacificDateKey(d) {
-  try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Vancouver", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-  } catch (e) {
-    return d.toISOString().slice(0, 10);
-  }
-}
-__name(pacificDateKey, "pacificDateKey");
-async function summarizeDay(env, dayKey, entries) {
-  let handoffs = 0;
-  const lines = entries.map(function(e) {
-    if (e.handoff) handoffs++;
-    return "- [" + (e.tag || "?") + (e.page ? " | " + e.page : "") + "] Q: " + e.q + " | A: " + e.a;
-  }).join("\n").slice(0, 12e3);
-  const prompt = "You are writing a short internal digest of one day of ANONYMOUS visitor chats with Artie, the chat assistant for Wild About Sailing (a sailing school). It is for the owner's eyes only.\n\nSTRICT: aggregate only. Never include names, emails, phone numbers, or any identifying detail; no verbatim quotes that could identify a person. If an entry contains such a detail, ignore that detail.\n\nWrite scannable plain text, under ~300 words, covering:\n1. Volume + a one-line read on the day.\n2. Top 3-5 topics people asked about.\n3. Most common or notable questions (paraphrased).\n4. Hand-off rate and what seemed to drive people to want a human.\n5. KNOWLEDGE GAPS - questions Artie answered poorly or couldn't answer, i.e. what to add to the knowledge Doc. Be specific; this is the most useful section.\n\nDate: " + dayKey + ". Totals: " + entries.length + " chats, " + handoffs + " hand-offs.\n\nENTRIES:\n" + lines;
-  try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODEL, max_tokens: 700, messages: [{ role: "user", content: prompt }] })
+export default {
+  async fetch(request) {
+    return new Response(WIDGET_SOURCE, {
+      headers: {
+        "content-type": "text/javascript; charset=utf-8",
+        "access-control-allow-origin": "*",
+        "cache-control": "public, max-age=300",
+      },
     });
-    if (!r.ok) return "Summary call failed (" + r.status + "). Totals: " + entries.length + " chats, " + handoffs + " hand-offs.";
-    const data = await r.json();
-    const text = (data.content || []).filter(function(b) {
-      return b.type === "text";
-    }).map(function(b) {
-      return b.text;
-    }).join("\n").trim();
-    return text || "Totals: " + entries.length + " chats, " + handoffs + " hand-offs.";
-  } catch (e) {
-    return "Summary error. Totals: " + entries.length + " chats, " + handoffs + " hand-offs.";
-  }
-}
-__name(summarizeDay, "summarizeDay");
-async function runDailyDigest(env, dayKeyOverride) {
-  if (!env.BREVO_API_KEY) {
-    console.log("digest: BREVO_API_KEY not set");
-    return;
-  }
-  const dayKey = dayKeyOverride || pacificDateKey(new Date(Date.now() - 24 * 3600 * 1e3));
-  const entries = [];
-  let cursor, pages = 0;
-  do {
-    const res = await env.RATE_KV.list({ prefix: "log:" + dayKey + ":", cursor });
-    for (let i = 0; i < res.keys.length; i++) {
-      try {
-        const v = await env.RATE_KV.get(res.keys[i].name);
-        if (v) entries.push(JSON.parse(v));
-      } catch (e) {
-      }
-    }
-    cursor = res.list_complete ? null : res.cursor;
-    pages++;
-  } while (cursor && pages < 10);
-  const subject = "Artie daily digest \u2014 " + dayKey + " (" + entries.length + " chats)";
-  const body = entries.length === 0 ? "No visitor chats were logged for " + dayKey + "." : await summarizeDay(env, dayKey, entries);
-  try {
-    const r = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", "accept": "application/json" },
-      body: JSON.stringify({
-        sender: { name: "Artie Digest", email: DIGEST_FROM },
-        to: [{ email: DIGEST_TO }],
-        subject,
-        textContent: body
-      })
-    });
-    if (!r.ok) console.log("Brevo send failed", r.status, (await r.text()).slice(0, 300));
-  } catch (e) {
-    console.log("digest send err", e);
-  }
-}
-__name(runDailyDigest, "runDailyDigest");
-var was_artie_default = {
-  async fetch(request, env, ctx) {
-    const origin = request.headers.get("Origin") || "";
-    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(origin) });
-    if (request.method !== "POST") return new Response("Not found", { status: 404 });
-    let body;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: "bad json" }, 400, origin);
-    }
-    if (body && body.lead) {
-      ctx.waitUntil(handleLead(env, body.lead).catch((e) => console.log("lead error", e)));
-      return json({ ok: true }, 200, origin);
-    }
-    if (body && body.digestNow) {
-      if (body.secret !== env.SHARED_SECRET) return json({ error: "forbidden" }, 403, origin);
-      const day = body.day === "today" ? pacificDateKey(/* @__PURE__ */ new Date()) : typeof body.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.day) ? body.day : void 0;
-      ctx.waitUntil(runDailyDigest(env, day));
-      return json({ ok: true, ran: "digest", day: day || "yesterday (default)" }, 200, origin);
-    }
-    const ip = request.headers.get("CF-Connecting-IP") || "unknown";
-    try {
-      const key = `rl:${ip}`;
-      const current = parseInt(await env.RATE_KV.get(key) || "0", 10);
-      if (current >= RATE_LIMIT) {
-        return json({ reply: "I'm fielding a lot of questions right now \u2014 please email annalise@wildaboutsailing.com and we'll get right back to you.", handoff: false }, 429, origin);
-      }
-      ctx.waitUntil(env.RATE_KV.put(key, String(current + 1), { expirationTtl: RATE_WINDOW }));
-    } catch (e) {
-      console.log("RATE_KV error:", e);
-    }
-    const incoming = Array.isArray(body.messages) ? body.messages : [];
-    if (incoming.length === 0) return json({ error: "no messages" }, 400, origin);
-    if (incoming.length > MAX_TURNS) return json({ reply: "We've covered a lot together! For anything more, leave your number below and a human will text you back.", handoff: true }, 200, origin);
-    const messages = incoming.filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string").map((m) => ({ role: m.role, content: m.content.slice(0, 4e3) }));
-    if (messages.length === 0) return json({ error: "no messages" }, 400, origin);
-    const pageContext = typeof body.pageContext === "string" && body.pageContext.trim() ? body.pageContext.trim().slice(0, 200) : "";
-    const [knowledge, schedule] = await Promise.all([getKnowledge(env), getSchedule(env)]);
-    const cachedBlock = SYSTEM_PROMPT + "\n\nKNOWLEDGE:\n" + (knowledge || "(knowledge temporarily unavailable \u2014 offer to connect them with Dave or Annalise)");
-    let contextLine = "";
-    if (pageContext) {
-      const hits = matchingScheduleLines(schedule, pageContext);
-      const focus = hits.length ? "MATCHING SESSION(S) for this page \u2014 lead with these:\n" + hits.join("\n") + "\n\n" : "";
-      contextLine = 'PAGE CONTEXT: The visitor is on the "' + pageContext + `" page, so that course is almost certainly what they're asking about. When they ask about courses, dates, price, or availability without naming a different course, answer about "` + pageContext + '" FIRST \u2014 do not default to the next thing on the calendar. Only bring up other courses if they ask to compare, or if this one has nothing open (then say so and offer the nearest alternative). Still answer any specific question they actually ask.\n' + focus;
-    }
-    const scheduleBlock = contextLine + "CURRENT SCHEDULE \u2014 live from Corsizio, may be a few minutes out of date. The registration page is always the final word on availability and booking.\n" + (schedule || "(Live schedule temporarily unavailable \u2014 direct people to the registration page for current dates and prices.)");
-    let replyText = "";
-    try {
-      const ar = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: MAX_TOKENS,
-          system: [
-            { type: "text", text: cachedBlock, cache_control: { type: "ephemeral" } },
-            { type: "text", text: scheduleBlock }
-          ],
-          messages
-        })
-      });
-      if (!ar.ok) {
-        console.log("Anthropic error", ar.status, await ar.text());
-        return json({ reply: "Sorry \u2014 I hit a snag. Leave your number below and we'll text you directly.", handoff: true }, 200, origin);
-      }
-      const data = await ar.json();
-      replyText = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-    } catch (e) {
-      console.log("fetch error", e);
-      return json({ reply: "Sorry \u2014 connection trouble on my end. Leave your number below and we'll reach out.", handoff: true }, 200, origin);
-    }
-    let handoff = false;
-    if (replyText.includes("<<HANDOFF>>")) {
-      handoff = true;
-      replyText = replyText.replace(/<<HANDOFF>>/g, "").trim();
-    }
-    try {
-      let lastUserMsg = "";
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-          lastUserMsg = messages[i].content;
-          break;
-        }
-      }
-      const tag = handoff ? "handoff" : /corsizio\.com\/register|spots?\s+left|sold\s*out/i.test(replyText) ? "schedule" : /isn't currently listed|not currently listed|can't answer|don't know|not sure/i.test(replyText) ? "unanswered" : "answered";
-      const entry = {
-        ts: (/* @__PURE__ */ new Date()).toISOString(),
-        page: pageContext || "",
-        q: scrubPII(lastUserMsg),
-        a: scrubPII(replyText),
-        tag,
-        handoff
-      };
-      const logKey = "log:" + pacificDateKey(/* @__PURE__ */ new Date()) + ":" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
-      ctx.waitUntil(env.RATE_KV.put(logKey, JSON.stringify(entry), { expirationTtl: LOG_TTL }));
-    } catch (e) {
-      console.log("log err", e);
-    }
-    return json({ reply: replyText, handoff }, 200, origin);
   },
-  // Cron Trigger (set in wrangler.toml). Builds yesterday's digest and emails it.
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(runDailyDigest(env));
-  }
 };
-async function handleLead(env, lead) {
-  const name = (lead.name || "A website visitor").slice(0, 80);
-  const phone = (lead.phone || "").slice(0, 30);
-  const email = (lead.email || "").slice(0, 120);
-  const method = (lead.method || "").slice(0, 20);
-  const summary = (lead.summary || "").slice(0, 300);
-  const transcript = (lead.transcript || "").slice(0, 4e3);
-  if (method !== "email" && phone && env.QUO_API_KEY && env.QUO_FROM && env.TEAM_NUMBERS) {
-    const team = env.TEAM_NUMBERS.split(",").map((s) => s.trim()).filter(Boolean);
-    const content = `\u26F5 New WAS lead \u2014 wants a call/text ASAP: ${name} (${phone}). Asked: "${summary}". Reply in Quo \u2014 see email for the one-tap link.`;
-    await Promise.all(team.map(async (num) => {
-      try {
-        const r = await fetch(QUO_API, {
-          method: "POST",
-          headers: { "Authorization": env.QUO_API_KEY, "content-type": "application/json" },
-          body: JSON.stringify({ from: env.QUO_FROM, to: [num], content })
-        });
-        if (!r.ok) console.log("Quo send failed", num, r.status, (await r.text()).slice(0, 300));
-      } catch (e) {
-        console.log("Quo send error", num, e);
-      }
-    }));
+
+const WIDGET_SOURCE = `
+// ===========================================================================
+//  was-artie-widget.js  —  "First Mate Artie" chat widget  (Quo edition)
+//  Wild About Sailing  ·  Carrd Head embed
+// ===========================================================================
+//
+//  INSTALL: wrap this whole file in <script> ... </script> and paste into a
+//  Carrd Head embed. Set WORKER_URL and PHONE first.
+//
+//  HANDOFF: when Artie hands off, the visitor is asked for name + mobile.
+//  On submit the widget POSTs a 'lead' to the Worker, which pings you in Quo
+//  and emails a one-tap "reply in Quo" link. PHONE below is the fallback
+//  "text us now" number — set it to your Quo number.
+//
+//  CARRD NOTES (handled): no <style> tags (inline styles only); SVG via
+//  createElementNS; no getElementById.
+//
+//  VERSION: bump WIDGET_VERSION on every deploy. It's logged to the browser
+//  console on load — open DevTools after a push to confirm the edge cache
+//  served the new build, not a stale one (5-minute edge cache; bump the
+//  ?v=N query param on the <script> tag to force a fresh fetch immediately).
+// ===========================================================================
+
+(function () {
+  var WIDGET_VERSION = "2026-06-30.1"; // bump on every deploy
+  console.log("[Artie widget] version " + WIDGET_VERSION);
+
+  var WORKER_URL = "https://was-artie.dave-6bf.workers.dev/"; // <-- SET THIS
+  var PHONE = "+12368005627";                                 // <-- your Quo number
+  var EMAIL = "annalise@wildaboutsailing.com";
+
+  var NAVY = "#28286E", RED = "#DC3C32", CHARCOAL = "#3D3D3D";
+  var Z = 2147483000; // above page content, below nav/modal (max int)
+  var CLAMP_PX = 200; // collapse bot messages taller than this, with a "Show more" toggle
+
+  var messages = [];
+  var visitor  = {};
+  var panel, msgArea, input, launcher, busy = false;
+
+  // Read page context from data-context attribute on our own script tag
+  var pageContext = (function() {
+    var scripts = document.querySelectorAll("script[src*=\"was-artie-widget\"]");
+    for (var i = 0; i < scripts.length; i++) {
+      var ctx = scripts[i].getAttribute("data-context");
+      if (ctx) return ctx;
+    }
+    return "";
+  })();
+
+  function el(tag, styles, text) {
+    var e = document.createElement(tag);
+    if (styles) e.setAttribute("style", styles);
+    if (text != null) e.textContent = text;
+    return e;
   }
-  if (env.APPS_SCRIPT_URL) {
-    const digits = phone.replace(/[^0-9+]/g, "");
-    const greeting = encodeURIComponent(`Hi ${lead.name || "there"}, this is Wild About Sailing following up on your chat with Artie.`);
-    const quoLink = digits ? `openphone://message?number=${digits}&text=${greeting}` : "";
-    await fetch(env.APPS_SCRIPT_URL, {
+  function svgIcon(paths, size) {
+    var ns = "http://www.w3.org/2000/svg";
+    var s = document.createElementNS(ns, "svg");
+    s.setAttribute("viewBox", "0 0 24 24");
+    s.setAttribute("width", size); s.setAttribute("height", size);
+    s.setAttribute("fill", "none"); s.setAttribute("stroke", "currentColor");
+    s.setAttribute("stroke-width", "2"); s.setAttribute("stroke-linecap", "round");
+    s.setAttribute("stroke-linejoin", "round");
+    paths.forEach(function (d) {
+      var p = document.createElementNS(ns, "path");
+      p.setAttribute("d", d); s.appendChild(p);
+    });
+    return s;
+  }
+  function isMobile() { return window.matchMedia("(max-width: 600px)").matches; }
+  var INPUT_STYLE = "width:100%;box-sizing:border-box;border:1px solid #ccc;border-radius:8px;padding:9px 11px;font-size:16px;margin-top:6px;outline:none;";
+
+  function build() {
+    launcher = el("button",
+      "position:fixed;bottom:20px;right:20px;width:60px;height:60px;border-radius:50%;background:" + RED +
+      ";color:#fff;border:none;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:" + Z + ";");
+    launcher.setAttribute("aria-label", "Chat with First Mate Artie");
+    launcher.appendChild(svgIcon(["M21 11.5a8.38 8.38 0 0 1-8.5 8.5 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5z"], "28"));
+    launcher.onclick = toggle;
+    document.body.appendChild(launcher);
+
+    var w = isMobile() ? "calc(100vw - 24px)" : "370px";
+    var h = isMobile() ? "70vh" : "520px";
+    panel = el("div",
+      "position:fixed;bottom:90px;right:20px;width:" + w + ";height:" + h + ";max-height:80vh;background:#fff;border-radius:14px;" +
+      "box-shadow:0 10px 40px rgba(0,0,0,.35);overflow:hidden;display:none;flex-direction:column;z-index:" + Z + ";font-family:Inter,system-ui,sans-serif;");
+
+    var head = el("div", "background:" + NAVY + ";color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px;");
+    var titleWrap = el("div");
+    titleWrap.appendChild(el("div", "font-weight:600;font-size:15px;", "First Mate Artie"));
+    titleWrap.appendChild(el("div", "font-size:12px;opacity:.7;", "Wild About Sailing"));
+    head.appendChild(titleWrap);
+    var close = el("button", "margin-left:auto;background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;", "\u00d7");
+    close.onclick = toggle; head.appendChild(close);
+    panel.appendChild(head);
+
+    msgArea = el("div", "flex:1;overflow-y:auto;padding:14px;background:#f7f8fa;");
+    panel.appendChild(msgArea);
+
+    var row = el("div", "display:flex;gap:8px;padding:10px;border-top:1px solid #eee;background:#fff;");
+    input = el("input", "flex:1;border:1px solid #ddd;border-radius:20px;padding:10px 14px;font-size:16px;outline:none;");
+    input.setAttribute("placeholder", "Ask about courses, getting started\u2026");
+    input.addEventListener("keydown", function (ev) { removeChips(); if (ev.key === "Enter") send(); });
+    var sendBtn = el("button", "background:" + RED + ";color:#fff;border:none;border-radius:20px;padding:0 16px;cursor:pointer;font-weight:600;", "Send");
+    sendBtn.onclick = send;
+    row.appendChild(input); row.appendChild(sendBtn);
+    panel.appendChild(row);
+
+    document.body.appendChild(panel);
+  }
+
+  var DEFAULT_CHIPS = ["Upcoming dates?", "Prices?", "Location?"];
+  var chipsEl = null;
+
+  function showChips() {
+    var chips = DEFAULT_CHIPS;
+    if (!chips.length) return;
+    chipsEl = el("div", "display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 8px;");
+    chips.forEach(function(label) {
+      var chip = el("button",
+        "background:#fff;color:"+NAVY+";border:1.5px solid "+NAVY+";border-radius:20px;" +
+        "padding:6px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,system-ui,sans-serif;",
+        label);
+      chip.onmouseenter = function() { this.style.background = NAVY; this.style.color = "#fff"; };
+      chip.onmouseleave = function() { this.style.background = "#fff"; this.style.color = NAVY; };
+      chip.onclick = function() {
+        removeChips();
+        input.value = label;
+        send();
+      };
+      chipsEl.appendChild(chip);
+    });
+    msgArea.appendChild(chipsEl);
+    msgArea.scrollTop = msgArea.scrollHeight;
+  }
+
+  function removeChips() {
+    if (chipsEl && chipsEl.parentNode) {
+      chipsEl.parentNode.removeChild(chipsEl);
+      chipsEl = null;
+    }
+  }
+
+  function toggle() {
+    var open = panel.style.display === "none";
+    panel.style.display = open ? "flex" : "none";
+    if (open && messages.length === 0) {
+      addBubble("assistant", "Ahoy! I'm Artie, the first mate here at Wild About Sailing. Ask me about our courses, what to expect on the water, or how to get started. \u26F5");
+      showChips();
+    }
+    if (open) setTimeout(function () { input.focus(); }, 50);
+  }
+
+  // Render a bot message with inline markdown. Handles NESTING: bold can wrap a
+  // link (Artie often emits **[label](url) - date**), so we parse bold first and
+  // parse links *within* each segment. A link is always rendered as a real
+  // anchor; its [label](url) markdown is never shown as raw text.
+  function appendRich(parent, text) {
+    var lines = String(text == null ? "" : text).split("\n");
+    lines.forEach(function (line, li) {
+      if (li > 0) parent.appendChild(document.createElement("br"));
+      renderInline(parent, line);
+    });
+  }
+  function renderInline(parent, str) {
+    var boldRe = /\*\*([^*]+)\*\*/g;
+    var last = 0, m;
+    boldRe.lastIndex = 0;
+    while ((m = boldRe.exec(str)) !== null) {
+      if (m.index > last) renderLinks(parent, str.slice(last, m.index));
+      var st = document.createElement("strong");
+      renderLinks(st, m[1]); // bold content may itself contain a [label](url) link
+      parent.appendChild(st);
+      last = boldRe.lastIndex;
+    }
+    if (last < str.length) renderLinks(parent, str.slice(last));
+  }
+  function renderLinks(parent, str) {
+    var linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+    var last = 0, m;
+    linkRe.lastIndex = 0;
+    while ((m = linkRe.exec(str)) !== null) {
+      if (m.index > last) parent.appendChild(document.createTextNode(str.slice(last, m.index)));
+      var a = document.createElement("a");
+      a.setAttribute("href", m[2]);
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener");
+      a.setAttribute("style", "color:" + NAVY + ";font-weight:600;text-decoration:underline;");
+      a.textContent = m[1];
+      parent.appendChild(a);
+      last = linkRe.lastIndex;
+    }
+    if (last < str.length) parent.appendChild(document.createTextNode(str.slice(last)));
+  }
+
+  function clampBubble(b, inner) {
+    var clamped = "position:relative;max-height:" + CLAMP_PX + "px;overflow:hidden;";
+    inner.setAttribute("style", clamped);
+    var fade = el("div", "position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(rgba(255,255,255,0),#fff);pointer-events:none;");
+    inner.appendChild(fade);
+    var toggle = el("a", "display:inline-block;margin-top:6px;color:" + NAVY + ";font-weight:600;font-size:13px;cursor:pointer;text-decoration:underline;", "Show more");
+    var open = false;
+    toggle.onclick = function () {
+      open = !open;
+      inner.setAttribute("style", open ? "position:relative;" : clamped);
+      fade.style.display = open ? "none" : "block";
+      toggle.textContent = open ? "Show less" : "Show more";
+    };
+    b.appendChild(toggle);
+  }
+
+  function addBubble(role, text) {
+    var mine = role === "user";
+    var wrap = el("div", "display:flex;margin:8px 0;" + (mine ? "justify-content:flex-end;" : "justify-content:flex-start;"));
+    var b = el("div",
+      "max-width:80%;padding:10px 13px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;" +
+      (mine ? "background:" + NAVY + ";color:#fff;border-bottom-right-radius:4px;"
+            : "background:#fff;color:" + CHARCOAL + ";border:1px solid #e6e6e6;border-bottom-left-radius:4px;"));
+    var inner = b;
+    if (mine) {
+      b.textContent = text;
+    } else {
+      inner = el("div");
+      appendRich(inner, text);
+      b.appendChild(inner);
+    }
+    wrap.appendChild(b); msgArea.appendChild(wrap);
+    if (!mine) {
+      var measure = function () {
+        if (inner.getAttribute("data-clamped")) return;
+        if (inner.scrollHeight > CLAMP_PX) { inner.setAttribute("data-clamped", "1"); clampBubble(b, inner); }
+        msgArea.scrollTop = msgArea.scrollHeight;
+      };
+      measure();
+      if (window.requestAnimationFrame) requestAnimationFrame(measure);
+    } else {
+      msgArea.scrollTop = msgArea.scrollHeight;
+    }
+    return b;
+  }
+
+  function send() {
+    var text = (input.value || "").trim();
+    if (!text || busy) return;
+    removeChips();
+    input.value = "";
+    messages.push({ role: "user", content: text });
+    addBubble("user", text);
+    busy = true;
+    var typing = addBubble("assistant", "\u2026");
+    fetch(WORKER_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        secret: env.SHARED_SECRET,
-        source: method === "email" ? "Artie chat handoff (email follow-up)" : "Artie chat handoff (call/text ASAP)",
-        name,
-        email,
-        phone,
-        method,
-        notes: transcript,
-        quoLink
+      body: JSON.stringify({ messages: messages, visitor: visitor, pageContext: pageContext }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (typing.parentNode) typing.parentNode.removeChild(typing);
+        var reply = data.reply || "Sorry, I didn't catch that.";
+        messages.push({ role: "assistant", content: reply });
+        addBubble("assistant", reply);
+        if (data.handoff) showHandoff();
+        busy = false;
       })
-    });
+      .catch(function () { typing.textContent = "Connection trouble \u2014 please email " + EMAIL + "."; busy = false; });
   }
-}
-__name(handleLead, "handleLead");
-export {
-  was_artie_default as default
-};
-//# sourceMappingURL=was-artie.js.map
+
+  function showHandoff() {
+    var box = el("div", "margin:10px 0;padding:12px;border:1px solid " + NAVY + ";border-radius:12px;background:#eef0f7;");
+    var title = el("div", "font-size:13px;color:" + CHARCOAL + ";font-weight:600;margin-bottom:8px;", "How would you like us to reach you?");
+    var body = el("div");
+    box.appendChild(title); box.appendChild(body);
+    msgArea.appendChild(box); msgArea.scrollTop = msgArea.scrollHeight;
+
+    function clear() { while (body.firstChild) body.removeChild(body.firstChild); }
+    function scroll() { msgArea.scrollTop = msgArea.scrollHeight; }
+    function lastUser() { var u = messages.filter(function (m) { return m.role === "user"; }).slice(-1)[0]; return u ? u.content : ""; }
+    function transcript() { return messages.map(function (m) { return (m.role === "user" ? "Visitor: " : "Artie: ") + m.content; }).join("\n"); }
+
+    function done(name) {
+      title.textContent = ""; clear();
+      box.setAttribute("style", "margin:10px 0;padding:12px;border:1px solid " + NAVY + ";border-radius:12px;background:#eef0f7;font-size:13px;color:" + CHARCOAL + ";");
+      box.textContent = "Thanks" + (name ? ", " + name : "") + "! We'll be in touch soon. \u2693";
+    }
+    function failed() {
+      clear();
+      body.appendChild(el("div", "font-size:13px;color:" + CHARCOAL + ";", "Hmm, that didn't send \u2014 please text us at " + PHONE + " or email " + EMAIL + "."));
+    }
+    function submitLead(payload, name, btn) {
+      fetch(WORKER_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ lead: payload }) })
+        .then(function () { done(name); }).catch(failed);
+    }
+    function backLink() {
+      var bk = el("a", "display:inline-block;margin-top:8px;font-size:12px;color:" + NAVY + ";cursor:pointer;text-decoration:underline;", "\u2039 Choose another way");
+      bk.onclick = showChoices; return bk;
+    }
+    function optionBtn(label, accent) {
+      return el("button",
+        "width:100%;margin-bottom:8px;border-radius:9px;padding:11px;cursor:pointer;font-weight:600;font-size:14px;text-align:left;" +
+        (accent ? "background:" + NAVY + ";color:#fff;border:none;" : "background:#fff;color:" + NAVY + ";border:1px solid " + NAVY + ";"), label);
+    }
+    function captureForm(opts) {
+      clear();
+      body.appendChild(el("div", "font-size:12px;color:" + CHARCOAL + ";opacity:.85;margin-bottom:6px;", opts.note));
+      var nameI = el("input", INPUT_STYLE); nameI.setAttribute("placeholder", "Your name");
+      var valI = el("input", INPUT_STYLE); valI.setAttribute("placeholder", opts.placeholder);
+      if (opts.inputmode) valI.setAttribute("inputmode", opts.inputmode);
+      if (opts.type) valI.setAttribute("type", opts.type);
+      body.appendChild(nameI); body.appendChild(valI);
+      var submit = el("button", "width:100%;margin-top:8px;background:" + RED + ";color:#fff;border:none;border-radius:8px;padding:10px;cursor:pointer;font-weight:600;", "Send");
+      submit.onclick = function () {
+        var nm = (nameI.value || "").trim(), v = (valI.value || "").trim();
+        if (!v) { valI.style.borderColor = RED; return; }
+        submit.disabled = true; submit.textContent = "Sending\u2026";
+        var payload = { name: nm, method: opts.method, summary: lastUser(), transcript: transcript() };
+        payload[opts.field] = v;
+        submitLead(payload, nm, submit);
+      };
+      body.appendChild(submit);
+      body.appendChild(backLink());
+      scroll();
+    }
+    function showSelfServe() {
+      clear();
+      body.appendChild(el("div", "font-size:12px;color:" + CHARCOAL + ";opacity:.85;margin-bottom:8px;", "Reach us anytime \u2014 we usually reply within a day or two:"));
+      var row = el("div", "display:flex;gap:8px;");
+      var bodyTxt = encodeURIComponent("Hi Wild About Sailing \u2014 I was chatting with Artie and had a question.");
+      var sms = el("a", "flex:1;text-align:center;background:#fff;border:1px solid " + NAVY + ";color:" + NAVY + ";text-decoration:none;padding:9px;border-radius:8px;font-size:13px;font-weight:600;", "Call or text");
+      sms.setAttribute("href", "sms:" + PHONE + "?&body=" + bodyTxt);
+      var mail = el("a", "flex:1;text-align:center;background:#fff;border:1px solid " + NAVY + ";color:" + NAVY + ";text-decoration:none;padding:9px;border-radius:8px;font-size:13px;font-weight:600;", "Email");
+      mail.setAttribute("href", "mailto:" + EMAIL);
+      row.appendChild(sms); row.appendChild(mail);
+      body.appendChild(row);
+      body.appendChild(el("div", "font-size:12px;color:" + CHARCOAL + ";margin-top:8px;", PHONE + "  \u00b7  " + EMAIL));
+      body.appendChild(backLink());
+      scroll();
+    }
+    function showChoices() {
+      title.textContent = "How would you like us to reach you?";
+      clear();
+      var b1 = optionBtn("\uD83D\uDCDE  Call or text me ASAP", true);
+      b1.onclick = function () { captureForm({ field: "phone", placeholder: "Mobile number", inputmode: "tel", method: "asap", note: "We'll text or call you as soon as we can." }); };
+      var b2 = optionBtn("\u2709\uFE0F  Follow-up by email", false);
+      b2.onclick = function () { captureForm({ field: "email", placeholder: "Email address", inputmode: "email", type: "email", method: "email", note: "We'll email you back, usually within a day or two." }); };
+      var b3 = optionBtn("I'll reach out myself", false);
+      b3.onclick = showSelfServe;
+      body.appendChild(b1); body.appendChild(b2); body.appendChild(b3);
+      scroll();
+    }
+    showChoices();
+  }
+
+  function init() { if (!document.body) return setTimeout(init, 200); build(); }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+})();
+`;
