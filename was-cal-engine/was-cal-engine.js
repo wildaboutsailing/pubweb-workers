@@ -203,7 +203,7 @@ export default {
       "#"+P+"details-btn{background:"+detailsBg+";color:"+detailsClr+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:10px 22px;border:"+detailsBdr+";border-radius:8px;cursor:pointer;letter-spacing:1.5px;text-transform:uppercase;display:inline-flex;align-items:center;gap:8px;}",
       "#"+P+"details-btn:hover{background:"+detailsHvBg+";color:"+detailsHvCl+";}",
       "#"+P+"btn{background:"+pickBg+";color:"+pickClr+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:10px 22px;border:"+pickBdr+";border-radius:8px;cursor:pointer;letter-spacing:2px;text-transform:uppercase;display:inline-flex;align-items:center;gap:10px;}",
-      "#"+P+"btn:hover{background:"+pickHvBg+";color:"+NAVY+";}",
+      "#"+P+"btn:hover{background:"+pickHvBg+";color:#fff;}",
       // Page calendar (hidden — no longer used as toggle)
       "#"+P+"wrap{display:none;position:relative;}",
       "#"+P+"wrap .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;position:relative;}",
