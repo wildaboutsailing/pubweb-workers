@@ -25,3 +25,5 @@ enabled = true
 # No [vars] block on purpose — every env value (the original four secrets, the
 # four promoted ones, plus DIGEST_MAILER_URL) is an encrypted Secret in the
 # dashboard. Secrets survive deploys and never touch the repo.
+
+
