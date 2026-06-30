@@ -43,11 +43,22 @@ export default {
     var days   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
     var courses = [], today = new Date(), curYear = today.getFullYear(), curMonth = today.getMonth(), selected = null;
     var modalCalMonth = today.getMonth(), modalCalYear = today.getFullYear(), modalSelected = null;
-    var currentCourse = null;
+    var currentCourse = null, selectedCourse = null;
 
     // ── Course key helper ──────────────────────────────────────────────────
     // Stable identifier for a course so every one of its day-cells can be
     // matched together. Prefer the Corsizio id; fall back to startDate+name.
+    function courseCoversDay(c, y, mo, da) {
+      if (!c) return false;
+      var start = new Date(c.startDate), end = new Date(c.endDate);
+      var endDay = new Date(end);
+      if (end.getUTCHours()===0 && end.getUTCMinutes()===0 && end.getUTCSeconds()===0) endDay.setUTCDate(endDay.getUTCDate()-1);
+      var cell = Date.UTC(y, mo, da);
+      var s = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+      var e = Date.UTC(endDay.getUTCFullYear(), endDay.getUTCMonth(), endDay.getUTCDate());
+      return cell >= s && cell <= e;
+    }
+
     function courseKey(c) {
       if (!c) return "";
       if (c.id) return String(c.id);
@@ -350,10 +361,12 @@ export default {
         modalCalMonth = fd.getUTCMonth();
         modalCalYear  = fd.getUTCFullYear();
         modalSelected = courseKey(first.course);
+        selectedCourse = first.course;
       } else {
         modalCalMonth = today.getMonth();
         modalCalYear  = today.getFullYear();
         modalSelected = null;
+        selectedCourse = null;
       }
       showView("v2");
       renderV2();
@@ -388,7 +401,7 @@ export default {
         var isToday = d===today.getDate() && modalCalMonth===today.getMonth() && modalCalYear===today.getFullYear();
         // A cell is "selected" if its course matches the selected course key,
         // so EVERY day of a multi-day course highlights together.
-        var isSel   = entry && modalSelected && courseKey(entry.course) === modalSelected;
+        var isSel   = selectedCourse && courseCoversDay(selectedCourse, modalCalYear, modalCalMonth, d);
         var bg    = isSel ? RED : (entry&&entry.type==="start" ? NAVY : (entry&&entry.type==="cont" ? SKY : "transparent"));
         var color = isSel ? "#fff" : (entry&&entry.type==="start" ? "#fff" : (entry&&entry.type==="cont" ? NAVY : (isToday ? NAVY : "#444")));
         var fw    = (entry||isToday) ? "700" : "400";
@@ -402,6 +415,7 @@ export default {
         cell.addEventListener("click", function() {
           // Select the whole COURSE, not just the clicked day.
           modalSelected = courseKey(entry.course);
+          selectedCourse = entry.course;
           populateInfo(entry.course);
           renderV2();
         });
@@ -418,6 +432,7 @@ export default {
     document.getElementById(P+"v2-prev").addEventListener("click", function() {
       modalCalMonth--; if (modalCalMonth<0) { modalCalMonth=11; modalCalYear--; }
       modalSelected = null;
+      selectedCourse = null;
       document.getElementById(P+"v2-info-date").textContent = "";
       document.getElementById(P+"v2-info-spots").textContent = "";
       document.getElementById(P+"v2-reg").style.display = "none";
@@ -426,6 +441,7 @@ export default {
     document.getElementById(P+"v2-next").addEventListener("click", function() {
       modalCalMonth++; if (modalCalMonth>11) { modalCalMonth=0; modalCalYear++; }
       modalSelected = null;
+      selectedCourse = null;
       document.getElementById(P+"v2-info-date").textContent = "";
       document.getElementById(P+"v2-info-spots").textContent = "";
       document.getElementById(P+"v2-reg").style.display = "none";
