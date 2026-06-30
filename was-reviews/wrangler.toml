@@ -1,0 +1,6 @@
+name = "was-reviews"
+main = "was-reviews.js"
+compatibility_date = "2026-06-04"
+
+[observability]
+enabled = true
