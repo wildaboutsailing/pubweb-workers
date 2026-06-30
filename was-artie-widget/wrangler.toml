@@ -1,0 +1,29 @@
+# pubweb-workers/was-artie-widget/wrangler.toml
+# ---------------------------------------------------------------------------
+# `name` MUST be exactly "was-artie-widget" so a future build deploys to
+# THIS existing Worker, not a new one and not the "was-artie" backend.
+#
+# DO NOT point this folder's Cloudflare build config at the "was-artie"
+# root directory — that's what caused the original incident (this Worker
+# was repeatedly overwritten with the backend's was-artie.js). This file
+# belongs in its OWN subfolder, e.g. pubweb-workers/was-artie-widget/,
+# alongside was-artie-widget.js, with Root directory set to that exact
+# subfolder name when you reconnect Git.
+name = "was-artie-widget"
+main = "was-artie-widget.js"
+compatibility_date = "2026-06-17"  # match was-artie / was-dash-cal so deploys don't warn
+
+# No [[kv_namespaces]] — the widget is static client-side JS with no server
+# logic of its own; all data calls go to the was-artie backend Worker over
+# fetch() from WORKER_URL inside the file.
+
+# No [triggers] — nothing scheduled; this Worker only serves GET requests
+# for the widget script.
+
+# Keep console.log visible for debugging (the WIDGET_VERSION line on load).
+[observability]
+enabled = true
+
+# No [vars] block — WORKER_URL, PHONE, and EMAIL are hardcoded constants
+# inside was-artie-widget.js itself (this file has no per-environment
+# secrets to manage).
