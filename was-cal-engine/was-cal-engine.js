@@ -2,6 +2,13 @@
  * Wild About Sailing — Calendar Engine
  * Cloudflare Worker
  * LAST UPDATED: June 2026
+ *
+ * CHANGES (this version):
+ *  - Registration-close filter: public calendars now hide courses that are
+ *    sold out OR whose registrationCloseDate has passed.
+ *  - Whole-course highlight: clicking ANY day of a multi-day course turns
+ *    every day of that course red (keyed by course id), and populates the
+ *    info box + Register link for that course.
  */
 
 export default {
@@ -37,6 +44,15 @@ export default {
     var courses = [], today = new Date(), curYear = today.getFullYear(), curMonth = today.getMonth(), selected = null;
     var modalCalMonth = today.getMonth(), modalCalYear = today.getFullYear(), modalSelected = null;
     var currentCourse = null;
+
+    // ── Course key helper ──────────────────────────────────────────────────
+    // Stable identifier for a course so every one of its day-cells can be
+    // matched together. Prefer the Corsizio id; fall back to startDate+name.
+    function courseKey(c) {
+      if (!c) return "";
+      if (c.id) return String(c.id);
+      return (c.startDate || "") + "|" + (c.name || "");
+    }
 
       var btnLayout = cfg.buttonLayout === "row" ? "row" : "column";
       var btnAlign  = "align-items:center;";
@@ -333,7 +349,7 @@ export default {
         var fd = new Date(first.course.startDate);
         modalCalMonth = fd.getUTCMonth();
         modalCalYear  = fd.getUTCFullYear();
-        modalSelected = first.key;
+        modalSelected = courseKey(first.course);
       } else {
         modalCalMonth = today.getMonth();
         modalCalYear  = today.getFullYear();
@@ -370,7 +386,9 @@ export default {
         var k       = modalCalYear+"-"+modalCalMonth+"-"+d;
         var entry   = map[k];
         var isToday = d===today.getDate() && modalCalMonth===today.getMonth() && modalCalYear===today.getFullYear();
-        var isSel   = modalSelected === k;
+        // A cell is "selected" if its course matches the selected course key,
+        // so EVERY day of a multi-day course highlights together.
+        var isSel   = entry && modalSelected && courseKey(entry.course) === modalSelected;
         var bg    = isSel ? RED : (entry&&entry.type==="start" ? NAVY : (entry&&entry.type==="cont" ? SKY : "transparent"));
         var color = isSel ? "#fff" : (entry&&entry.type==="start" ? "#fff" : (entry&&entry.type==="cont" ? NAVY : (isToday ? NAVY : "#444")));
         var fw    = (entry||isToday) ? "700" : "400";
@@ -382,7 +400,8 @@ export default {
         var k = cell.getAttribute("data-mk"), entry = map[k];
         if (!entry) return;
         cell.addEventListener("click", function() {
-          modalSelected = k;
+          // Select the whole COURSE, not just the clicked day.
+          modalSelected = courseKey(entry.course);
           populateInfo(entry.course);
           renderV2();
         });
@@ -435,7 +454,20 @@ export default {
     fetch(PROXY)
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        courses = (data.list || []).filter(function(e) { return isMatch(e.name); });
+        var now = new Date();
+        courses = (data.list || []).filter(function(e) {
+          // 1) name match (course-type filter for this calendar)
+          if (!isMatch(e.name)) return false;
+          // 2) registration-close filter (public calendars only):
+          //    hide sold-out courses and any whose registration has closed.
+          var soldOut = (e.stats && e.stats.soldout) || e.soldout;
+          if (soldOut) return false;
+          if (e.registrationCloseDate) {
+            var close = new Date(e.registrationCloseDate);
+            if (!isNaN(close.getTime()) && close <= now) return false;
+          }
+          return true;
+        });
         document.getElementById(P+"loading").style.display = "none";
       })
       .catch(function() {
@@ -467,4 +499,3 @@ export default {
     });
   }
 };
-
