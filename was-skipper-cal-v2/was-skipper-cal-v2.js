@@ -37,6 +37,3 @@ export default {
   }
 };
 
-
-
-
