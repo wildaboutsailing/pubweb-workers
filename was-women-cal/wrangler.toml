@@ -1,0 +1,43 @@
+# pubweb-workers/was-women-cal/wrangler.toml
+# ---------------------------------------------------------------------------
+# `name` MUST be exactly "was-women-cal" so a build deploys to THIS existing
+# Worker, not a new one and not a similarly-named neighbor.
+#
+# This folder must be its OWN subfolder in the repo, e.g.
+# pubweb-workers/was-women-cal/, containing this file plus was-women-cal.js.
+# When you connect the Cloudflare build, Root Directory must point at this
+# exact subfolder, and Build watch paths must be narrowed to
+# was-women-cal/* IMMEDIATELY on connecting — do not leave it as the
+# default wildcard even temporarily. (See Section 13 of the Ops Guide —
+# this is also the step that got missed on both was-ds-cal-discover and
+# was-ds-cal-v3 during their migrations and had to be fixed after the fact.)
+name = "was-women-cal"
+main = "was-women-cal.js"
+
+# CHECK THIS before first deploy: verify against the live Worker's actual
+# compatibility date rather than trusting this default.
+compatibility_date = "2026-06-17"  # <-- VERIFY against the live Worker
+
+# No [[kv_namespaces]] — same pattern as the other calendar widgets: live
+# data comes from was-cal-engine and corzisio-worker-learn-datesandspots via
+# fetch() calls made inside the served widget JS, not from anything this
+# Worker stores itself.
+
+# No [triggers] — this Worker only serves GET requests for the calendar
+# widget script.
+
+# Keep console.log visible for debugging.
+[observability]
+enabled = true
+
+# No [vars] block — no secrets or environment-specific config of its own.
+
+# NOTE: match() here does a loose substring check (name contains "women"),
+# looser than was-ds-cal-discover/was-ds-cal-v3's exact-phrase match. Works
+# fine against the current course catalog but isn't anchored -- worth
+# knowing if a future course name ever incidentally contains "women".
+#
+# NOTE: this config has buttonLayout but no buttonTheme -- a third slightly
+# different variant of the button config across the calendar workers.
+# Worth standardizing once all four remaining migrations are done, rather
+# than fixing piecemeal mid-migration.
