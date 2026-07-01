@@ -1,0 +1,37 @@
+# pubweb-workers/was-ds-cal-discover/wrangler.toml
+# ---------------------------------------------------------------------------
+# `name` MUST be exactly "was-ds-cal-discover" so a build deploys to THIS
+# existing Worker, not a new one and not a similarly-named neighbor
+# (was-ds-cal-v3, was-cal-engine, etc. are separate Workers).
+#
+# This folder must be its OWN subfolder in the repo, e.g.
+# pubweb-workers/was-ds-cal-discover/, containing this file plus
+# was-ds-cal-discover.js. When you connect the Cloudflare build, Root
+# Directory must point at this exact subfolder, and Build watch paths
+# must be narrowed to was-ds-cal-discover/* — never left as the default
+# wildcard on a shared monorepo (see Section 13 of the Ops Guide for why).
+name = "was-ds-cal-discover"
+main = "was-ds-cal-discover.js"
+
+# CHECK THIS before first deploy: open the Worker in Cloudflare -> Settings
+# -> check its current runtime/compatibility date, or match it to a sibling
+# Worker deployed around the same time (was-artie / was-dash-cal use
+# 2026-06-17). Setting this wrong won't break the deploy, but a mismatch
+# can make Wrangler warn about rolling back the runtime.
+compatibility_date = "2026-06-17"  # <-- VERIFY against the live Worker
+
+# No [[kv_namespaces]] — this Worker doesn't hold its own KV state; the
+# Discover Sailing calendar's live data comes from was-cal-engine and
+# corzisio-worker-learn-datesandspots, called via fetch() from inside the
+# served widget JS, not from anything this Worker stores itself.
+
+# No [triggers] — nothing scheduled; this Worker only serves GET requests
+# for the calendar widget script.
+
+# Keep console.log visible for debugging.
+[observability]
+enabled = true
+
+# No [vars] block — this Worker has no secrets or environment-specific
+# config of its own to manage; it's a pure static-JS server, same pattern
+# as was-artie-widget.
