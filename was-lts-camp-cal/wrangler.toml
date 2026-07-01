@@ -1,0 +1,37 @@
+# pubweb-workers/was-lts-camp-cal/wrangler.toml
+# ---------------------------------------------------------------------------
+# `name` MUST be exactly "was-lts-camp-cal" so a build deploys to THIS
+# existing Worker, not a new one and not a similarly-named neighbor
+# (was-lts-cal-v3, was-lts-cal-v2, was-lts2-cal, was-lts3-cal are all
+# separate Workers — this account has a LOT of "lts" variants, double-check
+# the name).
+#
+# This folder must be its OWN subfolder in the repo, e.g.
+# pubweb-workers/was-lts-camp-cal/, containing this file plus
+# was-lts-camp-cal.js. When you connect the Cloudflare build, Root
+# Directory must point at this exact subfolder, and Build watch paths
+# must be narrowed to was-lts-camp-cal/* IMMEDIATELY on connecting —
+# not left as the default wildcard even temporarily.
+name = "was-lts-camp-cal"
+main = "was-lts-camp-cal.js"
+
+# CHECK THIS before first deploy: verify against the live Worker's actual
+# compatibility date rather than trusting this default.
+compatibility_date = "2026-06-17"  # <-- VERIFY against the live Worker
+
+# No [[kv_namespaces]] — same pattern as the other calendar widgets: live
+# data comes from was-cal-engine and corzisio-worker-learn-datesandspots via
+# fetch() calls made inside the served widget JS, not from anything this
+# Worker stores itself. (Confirm this once you've pasted the actual source
+# for review — if it turns out to use a different backend proxy, this note
+# and the toml may need a small adjustment.)
+
+# No [triggers] — this Worker only serves GET requests for the calendar
+# widget script.
+
+# Keep console.log visible for debugging.
+[observability]
+enabled = true
+
+# No [vars] block — no secrets or environment-specific config of its own,
+# assuming it follows the same pattern as the other calendar widgets.
