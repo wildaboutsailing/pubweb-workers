@@ -35,3 +35,5 @@ enabled = true
 # No [vars] block — this Worker has no secrets or environment-specific
 # config of its own to manage; it's a pure static-JS server, same pattern
 # as was-artie-widget.
+
+
