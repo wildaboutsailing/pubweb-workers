@@ -1,28 +1,48 @@
-{\rtf1\ansi\ansicpg1252\cocoartf2870
-\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
-{\colortbl;\red255\green255\blue255;}
-{\*\expandedcolortbl;;}
-\margl1440\margr1440\vieww11520\viewh8400\viewkind0
-\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+# pubweb-workers/was-skipper-cal-v2/wrangler.toml
+# ---------------------------------------------------------------------------
+# `name` MUST be exactly "was-skipper-cal-v2" so a build deploys to THIS
+# existing Worker, not a new one and not a similarly-named neighbor
+# (was-skipper-cal, was-skipper-datelist are separate, already-unused
+# Workers — double-check the name).
+#
+# This folder must be its OWN subfolder in the repo, e.g.
+# pubweb-workers/was-skipper-cal-v2/, containing this file plus
+# was-skipper-cal-v2.js. When you connect the Cloudflare build, Root
+# Directory must point at this exact subfolder — clear the field and
+# retype it rather than trust what's shown, since was-lts-cal-v3 just
+# had a build fail with "root directory not found" from what looked like
+# a stray invisible character in that field. Build watch paths must be
+# narrowed to was-skipper-cal-v2/* IMMEDIATELY on connecting.
+name = "was-skipper-cal-v2"
+main = "was-skipper-cal-v2.js"
 
-\f0\fs24 \cf0 name = "was-skipper-cal-v2"\
-main = "src/index.js"\
-compatibility_date = "2026-06-02"\
-\
-[observability]\
-enabled = true\
-head_sampling_rate = 1\
-\
-[observability.logs]\
-enabled = true\
-head_sampling_rate = 1\
-persist = true\
-invocation_logs = true\
-\
-[observability.traces]\
-enabled = false\
-persist = true\
-head_sampling_rate = 1\
-}
+# CHECK THIS before first deploy: verify against the live Worker's actual
+# compatibility date rather than trusting this default.
+compatibility_date = "2026-06-17"  # <-- VERIFY against the live Worker
 
+# No [[kv_namespaces]] — same pattern as the other calendar widgets: live
+# data comes from was-cal-engine and corzisio-worker-learn-datesandspots via
+# fetch() calls made inside the served widget JS, not from anything this
+# Worker stores itself.
 
+# No [triggers] — this Worker only serves GET requests for the calendar
+# widget script.
+
+# Keep console.log visible for debugging.
+[observability]
+enabled = true
+
+# No [vars] block — no secrets or environment-specific config of its own.
+
+# NOTE: was-skipper-cal-v2.js already includes two fixes applied and
+# verified before this migration (not after, unlike the camp-cal /
+# lts-cal-v3 near-misses):
+#   1. document.head || document.documentElement fallback (same bug as
+#      was-lts-camp-cal and was-lts-cal-v3 had).
+#   2. match() no longer requires the literal "!" in "learn to skipper!" --
+#      was the tightest, most brittle course-name match of any calendar
+#      worker reviewed tonight; loosened to reduce breakage risk if the
+#      Corsizio course title ever changes.
+#
+# NOTE: this config has no buttonLayout / buttonTheme keys — worth
+# standardizing across all calendar workers once every migration is done.

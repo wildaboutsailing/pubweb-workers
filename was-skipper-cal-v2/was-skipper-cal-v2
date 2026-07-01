@@ -1,14 +1,11 @@
-
 /**
  * Wild About Sailing — Calendar Config Worker
  * Root: was-skipper-cal-root
  * LAST UPDATED: June 2026
  */
-
 export default {
   async fetch(request, env) {
     const ENGINE_URL = "https://was-cal-engine.dave-6bf.workers.dev/";
-
     const js = `
 (function() {
   // Push config onto queue — supports multiple calendars on same page
@@ -19,20 +16,18 @@ export default {
     toggle: true,
     group:  "was-cal-group",
     match:  function(name) {
-      return name.toLowerCase().indexOf("learn to skipper!")!==-1;
+      return name.toLowerCase().indexOf("learn to skipper")!==-1;
     }
   });
-
   // Load engine only once per page
   if (!window.WASCalEngineLoaded) {
     window.WASCalEngineLoaded = true;
     var s = document.createElement("script");
     s.src = "${ENGINE_URL}";
-    document.body.appendChild(s);
+    (document.head || document.documentElement).appendChild(s);
   }
 })();
 `;
-
     return new Response(js, {
       headers: {
         "Content-Type": "application/javascript",
