@@ -22,7 +22,7 @@ export default {
     window.WASCalEngineLoaded = true;
     var s = document.createElement("script");
     s.src = "${ENGINE_URL}";
-    document.body.appendChild(s);
+    (document.head || document.documentElement).appendChild(s);
   }
 })();
 `;
