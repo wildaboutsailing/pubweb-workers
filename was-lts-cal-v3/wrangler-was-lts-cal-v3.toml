@@ -1,0 +1,42 @@
+# pubweb-workers/was-lts-cal-v3/wrangler.toml
+# ---------------------------------------------------------------------------
+# `name` MUST be exactly "was-lts-cal-v3" so a build deploys to THIS
+# existing Worker, not a new one and not a similarly-named neighbor
+# (was-lts-cal-v2, was-lts2-cal, was-lts3-cal, was-lts-camp-cal are all
+# separate Workers — this account has a LOT of "lts" variants, double-check
+# the name before saving).
+#
+# This folder must be its OWN subfolder in the repo, e.g.
+# pubweb-workers/was-lts-cal-v3/, containing this file plus
+# was-lts-cal-v3.js. When you connect the Cloudflare build, Root Directory
+# must point at this exact subfolder, and Build watch paths must be
+# narrowed to was-lts-cal-v3/* IMMEDIATELY on connecting — not left as the
+# default wildcard even temporarily.
+name = "was-lts-cal-v3"
+main = "was-lts-cal-v3.js"
+
+# CHECK THIS before first deploy: verify against the live Worker's actual
+# compatibility date rather than trusting this default.
+compatibility_date = "2026-06-17"  # <-- VERIFY against the live Worker
+
+# No [[kv_namespaces]] — same pattern as the other calendar widgets: live
+# data comes from was-cal-engine and corzisio-worker-learn-datesandspots via
+# fetch() calls made inside the served widget JS, not from anything this
+# Worker stores itself.
+
+# No [triggers] — this Worker only serves GET requests for the calendar
+# widget script.
+
+# Keep console.log visible for debugging.
+[observability]
+enabled = true
+
+# No [vars] block — no secrets or environment-specific config of its own.
+
+# NOTE: was-lts-cal-v3.js already includes the document.head ||
+# document.documentElement fallback fix (same bug that was-lts-camp-cal
+# had) — applied and verified before this migration, not after.
+#
+# NOTE: this config has no buttonLayout / buttonTheme keys at all — a
+# fourth slightly different variant of the button config across the
+# calendar workers. Worth standardizing once all migrations are done.
