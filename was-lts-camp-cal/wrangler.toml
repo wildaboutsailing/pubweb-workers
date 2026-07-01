@@ -35,3 +35,4 @@ enabled = true
 
 # No [vars] block — no secrets or environment-specific config of its own,
 # assuming it follows the same pattern as the other calendar widgets.
+
