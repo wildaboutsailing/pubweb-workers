@@ -10,8 +10,8 @@
 # Directory must point at this exact subfolder, and Build watch paths
 # must be narrowed to was-ds-cal-discover/* — never left as the default
 # wildcard on a shared monorepo (see Section 13 of the Ops Guide for why).
-name = "was-ds-cal-discover"
-main = "was-ds-cal-discover.js"
+name = "was-ds-cal-v3"
+main = "was-ds-cal-v3.js"
 
 # CHECK THIS before first deploy: open the Worker in Cloudflare -> Settings
 # -> check its current runtime/compatibility date, or match it to a sibling
