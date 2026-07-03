@@ -1,25 +1,37 @@
-/**
- * Wild About Sailing — Calendar Engine
- * Cloudflare Worker
- * LAST UPDATED: June 2026
+/* ============================================================================
+ * WAS Calendar Engine  —  was-cal-engine.dave-6bf.workers.dev
+ * ----------------------------------------------------------------------------
+ * Shared booking-calendar engine for Wild About Sailing. One engine drives all
+ * four course calendars; each course loads a thin config Worker that pushes a
+ * config object onto window.WASCalQueue, then this engine renders the modal.
  *
- * CHANGES (this version):
- *  - Registration-close filter: public calendars now hide courses that are
- *    sold out OR whose registrationCloseDate has passed.
- *  - Whole-course highlight: clicking ANY day of a multi-day course turns
- *    every day of that course red (keyed by course id), and populates the
- *    info box + Register link for that course.
+ *   Thin configs:  was-ds-cal-v3     (Discover Sailing)
+ *                  was-lts-cal-v3    (Learn to Sail)
+ *                  was-lts-camp-cal  (Learn to Sail — camp)
+ *                  was-skipper-cal-v2 (Learn to Skipper)
+ *   Data proxy:    corzisio-worker-learn-datesandspots (Corsizio API)
+ *   Form page:     was-request-form  (loaded in an iframe at the request step)
+ *
+ * Deploy: edit here and redeploy this Worker only — all four calendars inherit
+ * the change. The thin configs rarely need touching.
+ *
+ * ----------------------------------------------------------------------------
+ * CHANGELOG
+ *   v2  2026-07-03
+ *     - A3: 44x44px tap targets for close button (#mh-x) and month nav arrows
+ *           via transparent ::before hit areas — no visual change to buttons.
+ *     - A4: iOS-safe scroll lock. openMo/closeMo now use the position:fixed
+ *           body technique and save/restore scrollY, so the page behind the
+ *           modal can't rubber-band and doesn't jump to top on close.
+ *   v1  (original)
+ *     - Shared-engine architecture, 3-step modal (details / calendar / form),
+ *           colour-coded availability calendar, scroll-hint on long copy.
+ * ============================================================================
  */
 
-export default {
-  async fetch(request, env) {
-
-    const FORM_PAGE_URL = "https://was-request-form.dave-6bf.workers.dev/";
-
-    const js = `
 (function() {
 
-  var FORM_PAGE_URL = "${FORM_PAGE_URL}";
+  var FORM_PAGE_URL = "https://was-request-form.dave-6bf.workers.dev/";
 
   function processQueue() {
     var queue = window.WASCalQueue || [];
@@ -95,7 +107,7 @@ export default {
     // ── Helpers ───────────────────────────────────────────────────────────
     function stripInlineStyles(html) {
       return html
-        .replace(/\\s*style="[^"]*"/gi, "")
+        .replace(/\s*style="[^"]*"/gi, "")
         .replace(/<h3>/gi, '<h3 style="font-size:15px;font-weight:700;color:#28286E;margin:14px 0 4px;font-family:Lato,sans-serif;">')
         .replace(/<p>/gi,  '<p style="margin:0 0 10px;line-height:1.6;">')
         .replace(/<ul>/gi, '<ul style="margin:4px 0 10px 18px;padding:0;">')
@@ -108,7 +120,7 @@ export default {
       if (!from && !to) return "";
       var f = from ? "$" + Number(from).toLocaleString() : null;
       var t = to   ? "$" + Number(to).toLocaleString()   : null;
-      if (f && t && from !== to) return f + " \u2013 " + t + " per person";
+      if (f && t && from !== to) return f + " – " + t + " per person";
       return (f || t) + " per person";
     }
 
@@ -128,7 +140,7 @@ export default {
       if (sd.getUTCFullYear()===ed.getUTCFullYear() && sd.getUTCMonth()===ed.getUTCMonth() && sd.getUTCDate()===ed.getUTCDate())
         return da[sd.getUTCDay()]+" "+mo[sd.getUTCMonth()]+" "+sd.getUTCDate()+", "+sd.getUTCFullYear();
       return da[sd.getUTCDay()]+" "+mo[sd.getUTCMonth()]+" "+sd.getUTCDate()+
-             " \u2013 "+da[ed.getUTCDay()]+" "+mo[ed.getUTCMonth()]+" "+ed.getUTCDate()+", "+ed.getUTCFullYear();
+             " – "+da[ed.getUTCDay()]+" "+mo[ed.getUTCMonth()]+" "+ed.getUTCDate()+", "+ed.getUTCFullYear();
     }
 
     // Single source of truth for "which course(s) occupy this calendar day".
@@ -223,6 +235,7 @@ export default {
       "#"+P+"mh-name{font-size:14px;font-weight:700;color:#fff;font-family:Lato,sans-serif;flex:1;line-height:1.3;}",
       "#"+P+"mh-price{font-size:18px;font-weight:700;color:rgba(255,255,255,0.9);font-family:'Prata',Georgia,serif;white-space:nowrap;line-height:1.2;}",
       "#"+P+"mh-x{position:absolute;top:8px;right:10px;width:28px;height:28px;border-radius:5px;border:none;cursor:pointer;font-size:16px;font-weight:700;line-height:28px;text-align:center;background:#888;color:"+NAVY+";padding:0;}",
+      "#"+P+"mh-x::before{content:'';position:absolute;top:-8px;right:-8px;bottom:-8px;left:-8px;}",
       "#"+P+"mh-x:hover{background:"+RED+";color:#fff;}",
       // Shared button styles
       "."+P+"bc{background:#fff;border:2px solid "+NAVY+";color:"+NAVY+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:8px 14px;border-radius:4px;cursor:pointer;white-space:nowrap;}",
@@ -241,7 +254,8 @@ export default {
       "#"+P+"v2{display:none;flex-direction:column;flex:1;min-height:0;}",
       "#"+P+"v2-body{padding:8px 14px 0;flex-shrink:0;}",
       "#"+P+"v2-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}",
-      "#"+P+"v2-nav button{background:none;border:1.5px solid "+NAVY+";color:"+NAVY+";width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:13px;line-height:1;padding:0;}",
+      "#"+P+"v2-nav button{background:none;border:1.5px solid "+NAVY+";color:"+NAVY+";width:24px;height:24px;border-radius:50%;cursor:pointer;font-size:13px;line-height:1;padding:0;position:relative;}",
+      "#"+P+"v2-nav button::before{content:'';position:absolute;top:-10px;right:-10px;bottom:-10px;left:-10px;border-radius:50%;}",
       "#"+P+"v2-nav button:hover{background:"+NAVY+";color:#fff;}",
       "#"+P+"v2-title{font-size:14px;font-weight:700;color:"+NAVY+";font-family:Lato,sans-serif;}",
       "#"+P+"v2-wrap{border:2px solid "+NAVY+";border-radius:8px;padding:6px;margin-bottom:0;}",
@@ -267,7 +281,7 @@ export default {
       '<div id="'+P+'wrap">' +
         '<div class="cal-grid" id="'+P+'grid"></div>' +
       '</div>' +
-      '<p id="'+P+'loading">Loading calendar\u2026</p>';
+      '<p id="'+P+'loading">Loading calendar…</p>';
 
     // ── Modal HTML ─────────────────────────────────────────────────────────
     var mo = document.createElement("div");
@@ -287,7 +301,7 @@ export default {
           '<div id="'+P+'v1-body"></div>' +
           '<div id="'+P+'v1-scroll-hint"></div>' +
           '<div id="'+P+'v1-foot">' +
-            '<button id="'+P+'v1-more" class="">See more \u2193</button>' +
+            '<button id="'+P+'v1-more" class="">See more ↓</button>' +
             '<button id="'+P+'v1-pick" class="'+P+'br">'+calIcon+' <span id="'+P+'v1-pick-label">Pick a Date</span></button>' +
           '</div>' +
         '</div>' +
@@ -307,10 +321,10 @@ export default {
           '<div id="'+P+'v2-info">' +
             '<div id="'+P+'v2-info-date"></div>' +
             '<div id="'+P+'v2-info-spots"></div>' +
-            '<a id="'+P+'v2-reg" class="'+P+'br" href="#" target="_blank" style="width:100%;box-sizing:border-box;justify-content:center;display:none;">Register \u2192</a>' +
+            '<a id="'+P+'v2-reg" class="'+P+'br" href="#" target="_blank" style="width:100%;box-sizing:border-box;justify-content:center;display:none;">Register →</a>' +
           '</div>' +
           '<div id="'+P+'v2-foot">' +
-            '<button id="'+P+'v2-back" class="'+P+'bc">\u2190 Details</button>' +
+            '<button id="'+P+'v2-back" class="'+P+'bc">← Details</button>' +
             '<button id="'+P+'v2-req" class="'+P+'bc">Request a date that works for you</button>' +
           '</div>' +
         '</div>' +
@@ -319,7 +333,7 @@ export default {
         '<div id="'+P+'v3">' +
           '<iframe id="'+P+'v3-iframe" src="" title="Request a Date"></iframe>' +
           '<div id="'+P+'v3-foot">' +
-            '<button id="'+P+'v3-back" class="'+P+'bc">\u2190 Pick a Date</button>' +
+            '<button id="'+P+'v3-back" class="'+P+'bc">← Pick a Date</button>' +
           '</div>' +
         '</div>' +
 
@@ -336,11 +350,24 @@ export default {
       if (t) { t.style.display = "flex"; t.style.flexDirection = "column"; }
     }
 
-    function openMo()  { document.getElementById(P+"mo").classList.add("show"); document.body.style.overflow = "hidden"; }
-    function closeMo() { document.getElementById(P+"mo").classList.remove("show"); document.body.style.overflow = ""; modalSelected = null; }
+    var lockY = 0;
+    function openMo()  {
+      lockY = window.scrollY || document.documentElement.scrollTop;
+      document.getElementById(P+"mo").classList.add("show");
+      var s = document.body.style;
+      s.position = "fixed"; s.top = -lockY + "px";
+      s.left = "0"; s.right = "0"; s.width = "100%";
+    }
+    function closeMo() {
+      document.getElementById(P+"mo").classList.remove("show");
+      var s = document.body.style;
+      s.position = ""; s.top = ""; s.left = ""; s.right = ""; s.width = "";
+      window.scrollTo(0, lockY);
+      modalSelected = null;
+    }
 
     function setHeader(c) {
-      var name = c.name.replace(/\\s*\\(.*$/, "").trim();
+      var name = c.name.replace(/\s*\(.*$/, "").trim();
       document.getElementById(P+"mh-name").textContent  = name;
       document.getElementById(P+"mh-price").textContent = formatPrice(c.priceFrom, c.priceTo);
     }
@@ -412,7 +439,7 @@ export default {
       document.getElementById(P+"v2-info-spots").textContent = s;
       var reg = document.getElementById(P+"v2-reg");
       reg.href        = c.formUrl || c.pageUrl;
-      reg.textContent = (s === "Full" ? "Join waitlist" : "Register") + " \u2192";
+      reg.textContent = (s === "Full" ? "Join waitlist" : "Register") + " →";
       reg.style.display = "inline-flex";
     }
 
@@ -550,17 +577,3 @@ export default {
   } else { startEngine(); }
 
 })();
-`;
-
-    return new Response(js, {
-      headers: {
-        "Content-Type": "application/javascript",
-        "Access-Control-Allow-Origin": "*",
-        // No long-lived caching: every page load asks the edge for the
-        // latest engine, so a deploy here goes live everywhere immediately —
-        // no more bumping ?v= on every embedding site after a change.
-        "Cache-Control": "no-cache, must-revalidate"
-      }
-    });
-  }
-};
