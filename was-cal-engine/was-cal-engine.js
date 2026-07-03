@@ -1,34 +1,27 @@
 /* ============================================================================
  * WAS Calendar Engine — CLOUDFLARE WORKER (was-cal-engine)
  * ----------------------------------------------------------------------------
- * IMPORTANT: This file IS the Worker. It does NOT run the calendar itself —
- * it serves the browser-side script (below, inside CLIENT_SCRIPT) as a static
- * JavaScript response. Pages load it via <script src="…was-cal-engine…"> and
- * the code then runs in the visitor's browser, where `document` exists.
+ * This file IS the Worker. It serves the browser-side script (inside
+ * CLIENT_SCRIPT) as a static application/javascript response. Pages load it
+ * via <script src="…was-cal-engine…"> and it runs in the visitor's browser.
  *
- * If you deploy the client script directly as the Worker, Cloudflare executes
- * its top-level code during validation and fails with "document is not
- * defined" — because the Worker runtime has no DOM. That is why it must stay
- * wrapped in the CLIENT_SCRIPT string and served, exactly as below.
+ * NOTE ON ESCAPING: the client script contains regex literals with
+ * backslashes (e.g. /\s*\(.*$/). Because CLIENT_SCRIPT is a template literal,
+ * every backslash and every ${ in the client code is escaped here (\\ and
+ * \${) so the served output is byte-for-byte the real script. If you hand-edit
+ * inside CLIENT_SCRIPT, keep that escaping or the regexes will break and the
+ * calendar buttons will silently fail to render.
  *
- * TO EDIT THE CALENDAR: change the code inside the CLIENT_SCRIPT template
- * literal, then redeploy this one Worker. All four course calendars
- * (Discover / Learn to Sail / camp / Skipper) load this engine, so the change
- * propagates to all of them. The thin config Workers rarely need touching.
+ * TO EDIT: change code inside CLIENT_SCRIPT, preserve escaping, redeploy this
+ * one Worker — all four course calendars inherit the change.
  *
- * Response headers below mirror the original Worker:
- *   content-type: application/javascript
- *   access-control-allow-origin: *
- *   cache-control: no-cache, must-revalidate
- *
+ * Headers mirror the original: application/javascript, ACAO *, no-cache.
  * ----------------------------------------------------------------------------
  * CHANGELOG (client script)
  *   v2  2026-07-03
- *     - A3: 44x44px tap targets for the close button (#mh-x) and month nav
- *           arrows, via transparent ::before hit areas — no visual change.
- *     - A4: iOS-safe scroll lock — openMo/closeMo use the position:fixed body
- *           technique and save/restore scrollY, so the page behind the modal
- *           can't rubber-band and doesn't jump to top on close.
+ *     - A3: 44x44px tap targets for close button + month arrows (::before hit
+ *           areas, no visual change).
+ *     - A4: iOS-safe scroll lock (position:fixed body + scrollY restore).
  *   v1  original
  * ============================================================================
  */
@@ -112,7 +105,7 @@ const CLIENT_SCRIPT = `
     // ── Helpers ───────────────────────────────────────────────────────────
     function stripInlineStyles(html) {
       return html
-        .replace(/\s*style="[^"]*"/gi, "")
+        .replace(/\\s*style="[^"]*"/gi, "")
         .replace(/<h3>/gi, '<h3 style="font-size:15px;font-weight:700;color:#28286E;margin:14px 0 4px;font-family:Lato,sans-serif;">')
         .replace(/<p>/gi,  '<p style="margin:0 0 10px;line-height:1.6;">')
         .replace(/<ul>/gi, '<ul style="margin:4px 0 10px 18px;padding:0;">')
@@ -372,7 +365,7 @@ const CLIENT_SCRIPT = `
     }
 
     function setHeader(c) {
-      var name = c.name.replace(/\s*\(.*$/, "").trim();
+      var name = c.name.replace(/\\s*\\(.*$/, "").trim();
       document.getElementById(P+"mh-name").textContent  = name;
       document.getElementById(P+"mh-price").textContent = formatPrice(c.priceFrom, c.priceTo);
     }
