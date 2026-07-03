@@ -1,0 +1,5 @@
+name = "was-request-form"
+main = "was-request-form-worker.js"
+compatibility_date = "2025-07-01"
+
+
