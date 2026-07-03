@@ -1,32 +1,27 @@
-/* ============================================================================
- * WAS Calendar Engine — CLOUDFLARE WORKER (was-cal-engine)
- * ----------------------------------------------------------------------------
- * This file IS the Worker. It serves the browser-side script (inside
- * CLIENT_SCRIPT) as a static application/javascript response. Pages load it
- * via <script src="…was-cal-engine…"> and it runs in the visitor's browser.
- *
- * NOTE ON ESCAPING: the client script contains regex literals with
- * backslashes (e.g. /\s*\(.*$/). Because CLIENT_SCRIPT is a template literal,
- * every backslash and every ${ in the client code is escaped here (\\ and
- * \${) so the served output is byte-for-byte the real script. If you hand-edit
- * inside CLIENT_SCRIPT, keep that escaping or the regexes will break and the
- * calendar buttons will silently fail to render.
- *
- * TO EDIT: change code inside CLIENT_SCRIPT, preserve escaping, redeploy this
- * one Worker — all four course calendars inherit the change.
- *
- * Headers mirror the original: application/javascript, ACAO *, no-cache.
- * ----------------------------------------------------------------------------
- * CHANGELOG (client script)
- *   v2  2026-07-03
- *     - A3: 44x44px tap targets for close button + month arrows (::before hit
- *           areas, no visual change).
- *     - A4: iOS-safe scroll lock (position:fixed body + scrollY restore).
- *   v1  original
- * ============================================================================
- */
-
+// was-cal-engine Worker — serves the browser script in CLIENT_SCRIPT.
+// (Human-facing docs live at the top of the served script itself, so they
+//  survive bundling. See the banner inside CLIENT_SCRIPT below.)
 const CLIENT_SCRIPT = `
+/* ============================================================================
+   WAS Calendar Engine — served browser script
+   ----------------------------------------------------------------------------
+   Shared engine for all four course calendars (Discover / Learn to Sail /
+   camp / Skipper). Served as application/javascript by the was-cal-engine
+   Worker; runs in the visitor's browser.
+
+   EDITING: this whole script lives inside a template literal in the Worker
+   source (const CLIENT_SCRIPT = \`…\`). Backslashes and \${ in the Worker source
+   are escaped (\\\\ and \\\${) so this served output is byte-correct. If you
+   hand-edit the Worker, preserve that escaping — regex literals like
+   /\\s*\\(.*$/ will break otherwise and the calendar buttons silently vanish.
+
+   CHANGELOG
+     v2  2026-07-03
+       - A3: 44x44px tap targets for close button + month arrows (::before
+             hit areas, no visual change).
+       - A4: iOS-safe scroll lock (position:fixed body + scrollY restore).
+     v1  original
+   ============================================================================ */
 (function() {
 
   var FORM_PAGE_URL = "https://was-request-form.dave-6bf.workers.dev/";
