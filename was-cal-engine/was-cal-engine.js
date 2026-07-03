@@ -1,34 +1,39 @@
 /* ============================================================================
- * WAS Calendar Engine  —  was-cal-engine.dave-6bf.workers.dev
+ * WAS Calendar Engine — CLOUDFLARE WORKER (was-cal-engine)
  * ----------------------------------------------------------------------------
- * Shared booking-calendar engine for Wild About Sailing. One engine drives all
- * four course calendars; each course loads a thin config Worker that pushes a
- * config object onto window.WASCalQueue, then this engine renders the modal.
+ * IMPORTANT: This file IS the Worker. It does NOT run the calendar itself —
+ * it serves the browser-side script (below, inside CLIENT_SCRIPT) as a static
+ * JavaScript response. Pages load it via <script src="…was-cal-engine…"> and
+ * the code then runs in the visitor's browser, where `document` exists.
  *
- *   Thin configs:  was-ds-cal-v3     (Discover Sailing)
- *                  was-lts-cal-v3    (Learn to Sail)
- *                  was-lts-camp-cal  (Learn to Sail — camp)
- *                  was-skipper-cal-v2 (Learn to Skipper)
- *   Data proxy:    corzisio-worker-learn-datesandspots (Corsizio API)
- *   Form page:     was-request-form  (loaded in an iframe at the request step)
+ * If you deploy the client script directly as the Worker, Cloudflare executes
+ * its top-level code during validation and fails with "document is not
+ * defined" — because the Worker runtime has no DOM. That is why it must stay
+ * wrapped in the CLIENT_SCRIPT string and served, exactly as below.
  *
- * Deploy: edit here and redeploy this Worker only — all four calendars inherit
- * the change. The thin configs rarely need touching.
+ * TO EDIT THE CALENDAR: change the code inside the CLIENT_SCRIPT template
+ * literal, then redeploy this one Worker. All four course calendars
+ * (Discover / Learn to Sail / camp / Skipper) load this engine, so the change
+ * propagates to all of them. The thin config Workers rarely need touching.
+ *
+ * Response headers below mirror the original Worker:
+ *   content-type: application/javascript
+ *   access-control-allow-origin: *
+ *   cache-control: no-cache, must-revalidate
  *
  * ----------------------------------------------------------------------------
- * CHANGELOG
+ * CHANGELOG (client script)
  *   v2  2026-07-03
- *     - A3: 44x44px tap targets for close button (#mh-x) and month nav arrows
- *           via transparent ::before hit areas — no visual change to buttons.
- *     - A4: iOS-safe scroll lock. openMo/closeMo now use the position:fixed
- *           body technique and save/restore scrollY, so the page behind the
- *           modal can't rubber-band and doesn't jump to top on close.
- *   v1  (original)
- *     - Shared-engine architecture, 3-step modal (details / calendar / form),
- *           colour-coded availability calendar, scroll-hint on long copy.
+ *     - A3: 44x44px tap targets for the close button (#mh-x) and month nav
+ *           arrows, via transparent ::before hit areas — no visual change.
+ *     - A4: iOS-safe scroll lock — openMo/closeMo use the position:fixed body
+ *           technique and save/restore scrollY, so the page behind the modal
+ *           can't rubber-band and doesn't jump to top on close.
+ *   v1  original
  * ============================================================================
  */
 
+const CLIENT_SCRIPT = `
 (function() {
 
   var FORM_PAGE_URL = "https://was-request-form.dave-6bf.workers.dev/";
@@ -577,3 +582,16 @@
   } else { startEngine(); }
 
 })();
+`;
+
+export default {
+  async fetch(request) {
+    return new Response(CLIENT_SCRIPT, {
+      headers: {
+        "content-type": "application/javascript",
+        "access-control-allow-origin": "*",
+        "cache-control": "no-cache, must-revalidate"
+      }
+    });
+  }
+};
