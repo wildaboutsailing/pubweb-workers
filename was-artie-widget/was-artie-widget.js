@@ -57,7 +57,7 @@ const WIDGET_SOURCE = `// ======================================================
 // ===========================================================================
 
 (function () {
-  var WIDGET_VERSION = "2026-07-03.1"; // bump on every deploy
+  var WIDGET_VERSION = "2026-07-03.2"; // bump on every deploy
   console.log("[Artie widget] version " + WIDGET_VERSION);
 
   var WORKER_URL = "https://was-artie.dave-6bf.workers.dev/"; // <-- SET THIS
@@ -151,7 +151,7 @@ const WIDGET_SOURCE = `// ======================================================
     var head = el("div", "background:" + NAVY + ";color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px;");
     var titleWrap = el("div");
     titleWrap.appendChild(el("div", "font-weight:600;font-size:15px;", "First Mate Artie"));
-    titleWrap.appendChild(el("div", "font-size:12px;opacity:.7;", "Wild About Sailing"));
+    titleWrap.appendChild(el("div", "font-size:12px;opacity:.7;margin-top:2px;", "Wild About Sailing"));
     head.appendChild(titleWrap);
     var close = el("button", "margin-left:auto;background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;", "\\u00d7");
     close.onclick = toggle; head.appendChild(close);
@@ -175,9 +175,13 @@ const WIDGET_SOURCE = `// ======================================================
   var DEFAULT_CHIPS = ["Upcoming dates?", "Prices?", "Tell me a joke"];
   var chipsEl = null;
 
-  function showChips() {
-    var chips = DEFAULT_CHIPS;
-    if (!chips.length) return;
+  function showChips() { renderChips(DEFAULT_CHIPS); }
+
+  // A7 — render a set of quick-reply chips (opener defaults, or Artie's
+  // contextual suggestions returned in data.chips after an answer).
+  function renderChips(chips) {
+    removeChips();
+    if (!chips || !chips.length) return;
     chipsEl = el("div", "display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 8px;");
     chips.forEach(function(label) {
       var chip = el("button",
@@ -314,6 +318,7 @@ const WIDGET_SOURCE = `// ======================================================
     saveSession(panel.style.display !== "none"); // A9 — persist the question immediately
     busy = true;
     var typing = addBubble("assistant", "\\u2026");
+    typing.style.fontSize = "11.2px"; // A10 tweak — dancing bullets 20% smaller than the 14px body
     var typingDots = 1; // A10 — animate the typing indicator
     var typingTimer = setInterval(function () {
       typingDots = (typingDots % 3) + 1;
@@ -333,6 +338,7 @@ const WIDGET_SOURCE = `// ======================================================
         messages.push({ role: "assistant", content: reply });
         addBubble("assistant", reply);
         if (data.handoff) showHandoff();
+        else if (data.chips && data.chips.length) renderChips(data.chips); // A7 — contextual follow-up chips
         busy = false;
         saveSession(panel.style.display !== "none"); // A9 — persist the reply
       })
