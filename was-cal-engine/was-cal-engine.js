@@ -1,6 +1,6 @@
 // was-cal-engine Worker — serves the browser script in CLIENT_SCRIPT.
-// (Human-facing docs live at the top of the served script itself, so they
-//  survive bundling. See the banner inside CLIENT_SCRIPT below.)
+// (Human-facing docs + changelog live at the top of the served script itself,
+//  inside CLIENT_SCRIPT, so they survive esbuild bundling.)
 const CLIENT_SCRIPT = `
 /* ============================================================================
    WAS Calendar Engine — served browser script
@@ -16,6 +16,17 @@ const CLIENT_SCRIPT = `
    /\\s*\\(.*$/ will break otherwise and the calendar buttons silently vanish.
 
    CHANGELOG
+     v3  2026-07-03
+       - A6: colour-dot legend under the calendar (Start day / Course day /
+             Selected).
+       - A8: step indicator across the top (1 Details / 2 Dates / 3 Request),
+             active + done states updated by showView().
+       - A11: modal height auto (min 480px, max min(640px,90vh)) so the
+             on-screen keyboard can't crush the request-form step.
+       - Polish: equal button-bar heights (transparent border + min-height on
+             the borderless button); larger 32px close button moved into the
+             header row with 44px tap target preserved; evened header padding
+             and aligned title vs Prata price.
      v2  2026-07-03
        - A3: 44x44px tap targets for close button + month arrows (::before
              hit areas, no visual change).
@@ -205,9 +216,9 @@ const CLIENT_SCRIPT = `
     style.textContent = [
       // Page buttons
       "#"+P+"btns{display:flex;flex-direction:"+btnLayout+";"+btnAlign+"gap:10px;margin-bottom:4px;}",
-      "#"+P+"details-btn{background:"+detailsBg+";color:"+detailsClr+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:10px 22px;border:"+detailsBdr+";border-radius:8px;cursor:pointer;letter-spacing:1.5px;text-transform:uppercase;display:inline-flex;align-items:center;gap:8px;}",
+      "#"+P+"details-btn{box-sizing:border-box;background:"+detailsBg+";color:"+detailsClr+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:10px 22px;border:"+detailsBdr+";border-radius:8px;cursor:pointer;letter-spacing:1.5px;text-transform:uppercase;display:inline-flex;align-items:center;justify-content:center;gap:8px;line-height:1;min-height:42px;}",
       "#"+P+"details-btn:hover{background:"+detailsHvBg+";color:"+detailsHvCl+";}",
-      "#"+P+"btn{background:"+pickBg+";color:"+pickClr+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:10px 22px;border:"+pickBdr+";border-radius:8px;cursor:pointer;letter-spacing:2px;text-transform:uppercase;display:inline-flex;align-items:center;gap:10px;}",
+      "#"+P+"btn{box-sizing:border-box;background:"+pickBg+";color:"+pickClr+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:10px 22px;border:2px solid transparent;border-radius:8px;cursor:pointer;letter-spacing:2px;text-transform:uppercase;display:inline-flex;align-items:center;justify-content:center;gap:10px;line-height:1;min-height:42px;}",
       "#"+P+"btn:hover{background:"+pickHvBg+";color:#fff;}",
       // Page calendar (hidden — no longer used as toggle)
       "#"+P+"wrap{display:none;position:relative;}",
@@ -222,14 +233,22 @@ const CLIENT_SCRIPT = `
       "#"+P+"mo{display:none;position:fixed;z-index:2147483647;inset:0;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;}",
       "#"+P+"mo.show{display:flex;}",
       // Modal shell — FIXED height so V1 and V2 are identical size
-      "#"+P+"md{background:#fff;border-radius:10px;width:90%;max-width:440px;height:82vh;max-height:640px;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(40,40,110,0.25);font-family:Lato,sans-serif;overflow:hidden;}",
+      "#"+P+"md{background:#fff;border-radius:10px;width:90%;max-width:440px;height:auto;min-height:480px;max-height:min(640px,90vh);display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(40,40,110,0.25);font-family:Lato,sans-serif;overflow:hidden;}",
       // Shared header
-      "#"+P+"mh{background:"+NAVY+";padding:12px 44px 12px 16px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;gap:8px;position:relative;}",
-      "#"+P+"mh-name{font-size:14px;font-weight:700;color:#fff;font-family:Lato,sans-serif;flex:1;line-height:1.3;}",
-      "#"+P+"mh-price{font-size:18px;font-weight:700;color:rgba(255,255,255,0.9);font-family:'Prata',Georgia,serif;white-space:nowrap;line-height:1.2;}",
-      "#"+P+"mh-x{position:absolute;top:8px;right:10px;width:28px;height:28px;border-radius:5px;border:none;cursor:pointer;font-size:16px;font-weight:700;line-height:28px;text-align:center;background:#888;color:"+NAVY+";padding:0;}",
-      "#"+P+"mh-x::before{content:'';position:absolute;top:-8px;right:-8px;bottom:-8px;left:-8px;}",
+      "#"+P+"mh{background:"+NAVY+";padding:12px 14px;flex-shrink:0;display:flex;align-items:center;gap:12px;}",
+      "#"+P+"mh-name{font-size:14px;font-weight:700;color:#fff;font-family:Lato,sans-serif;flex:1;min-width:0;line-height:1.25;}",
+      "#"+P+"mh-price{font-size:18px;font-weight:700;color:rgba(255,255,255,0.92);font-family:'Prata',Georgia,serif;white-space:nowrap;line-height:1.25;flex-shrink:0;}",
+      "#"+P+"mh-x{flex-shrink:0;position:relative;width:32px;height:32px;border-radius:6px;border:none;cursor:pointer;font-size:20px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.15);color:#fff;padding:0;}",
+      "#"+P+"mh-x::before{content:'';position:absolute;top:-6px;right:-6px;bottom:-6px;left:-6px;}",
       "#"+P+"mh-x:hover{background:"+RED+";color:#fff;}",
+      // A8 — step indicator (Details 1 / Dates 2 / Request 3)
+      "#"+P+"steps{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0 2px;flex-shrink:0;background:#fff;}",
+      "."+P+"step{display:flex;align-items:center;gap:6px;font-family:Lato,sans-serif;font-size:11px;font-weight:700;color:#c3c3d1;}",
+      "."+P+"step-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;background:#e6e6ef;color:#9a9ab0;}",
+      "."+P+"step.active{color:"+NAVY+";}",
+      "."+P+"step.active ."+P+"step-dot{background:"+NAVY+";color:#fff;}",
+      "."+P+"step.done ."+P+"step-dot{background:"+SKY+";color:"+NAVY+";}",
+      "."+P+"step-sep{width:14px;height:2px;background:#e6e6ef;border-radius:2px;}",
       // Shared button styles
       "."+P+"bc{background:#fff;border:2px solid "+NAVY+";color:"+NAVY+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:8px 14px;border-radius:4px;cursor:pointer;white-space:nowrap;}",
       "."+P+"bc:hover{background:"+RED+";border-color:"+RED+";color:#fff;}",
@@ -253,6 +272,10 @@ const CLIENT_SCRIPT = `
       "#"+P+"v2-title{font-size:14px;font-weight:700;color:"+NAVY+";font-family:Lato,sans-serif;}",
       "#"+P+"v2-wrap{border:2px solid "+NAVY+";border-radius:8px;padding:6px;margin-bottom:0;}",
       "#"+P+"v2-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;}",
+      // A6 — colour-dot legend
+      "#"+P+"v2-legend{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;padding:6px 8px 2px;font-family:Lato,sans-serif;font-size:10.5px;color:#666;}",
+      "."+P+"lg{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;}",
+      "."+P+"lg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}",
       // Info box — always present, shown/hidden — reserves space
       "#"+P+"v2-info{padding:10px 14px;flex:1;min-height:0;border-top:1px solid #e8ecf0;margin:0 0 0;}",
       "#"+P+"v2-info-date{font-size:14px;font-weight:700;color:"+NAVY+";margin-bottom:3px;font-family:Lato,sans-serif;}",
@@ -289,6 +312,15 @@ const CLIENT_SCRIPT = `
           '<button id="'+P+'mh-x">&times;</button>' +
         '</div>' +
 
+        // A8 — step indicator
+        '<div id="'+P+'steps">' +
+          '<span class="'+P+'step" data-step="1"><span class="'+P+'step-dot">1</span>Details</span>' +
+          '<span class="'+P+'step-sep"></span>' +
+          '<span class="'+P+'step" data-step="2"><span class="'+P+'step-dot">2</span>Dates</span>' +
+          '<span class="'+P+'step-sep"></span>' +
+          '<span class="'+P+'step" data-step="3"><span class="'+P+'step-dot">3</span>Request</span>' +
+        '</div>' +
+
         // V1 — Details
         '<div id="'+P+'v1">' +
           '<div id="'+P+'v1-body"></div>' +
@@ -309,6 +341,11 @@ const CLIENT_SCRIPT = `
               '<button id="'+P+'v2-next">&#8250;</button>' +
             '</div>' +
             '<div id="'+P+'v2-wrap"><div id="'+P+'v2-grid"></div></div>' +
+            '<div id="'+P+'v2-legend">' +
+              '<span class="'+P+'lg"><span class="'+P+'lg-dot" style="background:'+NAVY+';"></span>Start day</span>' +
+              '<span class="'+P+'lg"><span class="'+P+'lg-dot" style="background:'+SKY+';"></span>Course day</span>' +
+              '<span class="'+P+'lg"><span class="'+P+'lg-dot" style="background:'+RED+';"></span>Selected</span>' +
+            '</div>' +
           '</div>' +
           // Info box — always visible, populated on date select (or auto-select)
           '<div id="'+P+'v2-info">' +
@@ -341,6 +378,18 @@ const CLIENT_SCRIPT = `
       });
       var t = document.getElementById(P+v);
       if (t) { t.style.display = "flex"; t.style.flexDirection = "column"; }
+      updateSteps(v);
+    }
+
+    // A8 — reflect the current view in the step indicator.
+    function updateSteps(v) {
+      var cur = v === "v1" ? 1 : v === "v2" ? 2 : 3;
+      var stepsEl = document.getElementById(P+"steps");
+      if (!stepsEl) return;
+      stepsEl.querySelectorAll("[data-step]").forEach(function(el) {
+        var n = parseInt(el.getAttribute("data-step"), 10);
+        el.className = P+"step" + (n === cur ? " active" : n < cur ? " done" : "");
+      });
     }
 
     var lockY = 0;
