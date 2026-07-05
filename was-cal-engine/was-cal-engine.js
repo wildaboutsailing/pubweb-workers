@@ -19,14 +19,16 @@ const CLIENT_SCRIPT = `
      v3  2026-07-03
        - A6: colour-dot legend under the calendar (Start day / Course day /
              Selected).
-       - A8: step indicator across the top (1 Details / 2 Dates / 3 Request),
-             active + done states updated by showView().
        - A11: modal height auto (min 480px, max min(640px,90vh)) so the
              on-screen keyboard can't crush the request-form step.
        - Polish: equal button-bar heights (transparent border + min-height on
              the borderless button); larger 32px close button moved into the
              header row with 44px tap target preserved; evened header padding
              and aligned title vs Prata price.
+       - Flow: removed the 1-2-3 step indicator (the flow isn't linear —
+             Register is the finish for most; Request is an escape hatch).
+             Demoted "Request a date" from a footer button that competed with
+             Register to a quiet fallback link beneath it.
      v2  2026-07-03
        - A3: 44x44px tap targets for close button + month arrows (::before
              hit areas, no visual change).
@@ -241,14 +243,6 @@ const CLIENT_SCRIPT = `
       "#"+P+"mh-x{flex-shrink:0;position:relative;width:32px;height:32px;border-radius:6px;border:none;cursor:pointer;font-size:20px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.15);color:#fff;padding:0;}",
       "#"+P+"mh-x::before{content:'';position:absolute;top:-6px;right:-6px;bottom:-6px;left:-6px;}",
       "#"+P+"mh-x:hover{background:"+RED+";color:#fff;}",
-      // A8 — step indicator (Details 1 / Dates 2 / Request 3)
-      "#"+P+"steps{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px 0 2px;flex-shrink:0;background:#fff;}",
-      "."+P+"step{display:flex;align-items:center;gap:6px;font-family:Lato,sans-serif;font-size:11px;font-weight:700;color:#c3c3d1;}",
-      "."+P+"step-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;background:#e6e6ef;color:#9a9ab0;}",
-      "."+P+"step.active{color:"+NAVY+";}",
-      "."+P+"step.active ."+P+"step-dot{background:"+NAVY+";color:#fff;}",
-      "."+P+"step.done ."+P+"step-dot{background:"+SKY+";color:"+NAVY+";}",
-      "."+P+"step-sep{width:14px;height:2px;background:#e6e6ef;border-radius:2px;}",
       // Shared button styles
       "."+P+"bc{background:#fff;border:2px solid "+NAVY+";color:"+NAVY+";font-family:Lato,sans-serif;font-size:13px;font-weight:700;padding:8px 14px;border-radius:4px;cursor:pointer;white-space:nowrap;}",
       "."+P+"bc:hover{background:"+RED+";border-color:"+RED+";color:#fff;}",
@@ -280,6 +274,9 @@ const CLIENT_SCRIPT = `
       "#"+P+"v2-info{padding:10px 14px;flex:1;min-height:0;border-top:1px solid #e8ecf0;margin:0 0 0;}",
       "#"+P+"v2-info-date{font-size:14px;font-weight:700;color:"+NAVY+";margin-bottom:3px;font-family:Lato,sans-serif;}",
       "#"+P+"v2-info-spots{font-size:12px;color:#666;margin-bottom:10px;font-family:Lato,sans-serif;}",
+      // Quiet fallback link under Register (demoted from a competing button)
+      "#"+P+"v2-req{display:block;margin-top:8px;text-align:center;font-family:Lato,sans-serif;font-size:12px;color:#8a8aa0;text-decoration:underline;cursor:pointer;}",
+      "#"+P+"v2-req:hover{color:"+NAVY+";}",
       "#"+P+"v2-foot{padding:8px 14px;border-top:1px solid #e8ecf0;flex-shrink:0;display:flex;gap:8px;align-items:center;justify-content:space-between;}",
       // V3 — Form
       "#"+P+"v3{display:none;flex-direction:column;flex:1;min-height:0;}",
@@ -310,15 +307,6 @@ const CLIENT_SCRIPT = `
           '<span id="'+P+'mh-name"></span>' +
           '<span id="'+P+'mh-price"></span>' +
           '<button id="'+P+'mh-x">&times;</button>' +
-        '</div>' +
-
-        // A8 — step indicator
-        '<div id="'+P+'steps">' +
-          '<span class="'+P+'step" data-step="1"><span class="'+P+'step-dot">1</span>Details</span>' +
-          '<span class="'+P+'step-sep"></span>' +
-          '<span class="'+P+'step" data-step="2"><span class="'+P+'step-dot">2</span>Dates</span>' +
-          '<span class="'+P+'step-sep"></span>' +
-          '<span class="'+P+'step" data-step="3"><span class="'+P+'step-dot">3</span>Request</span>' +
         '</div>' +
 
         // V1 — Details
@@ -352,10 +340,10 @@ const CLIENT_SCRIPT = `
             '<div id="'+P+'v2-info-date"></div>' +
             '<div id="'+P+'v2-info-spots"></div>' +
             '<a id="'+P+'v2-reg" class="'+P+'br" href="#" target="_blank" style="width:100%;box-sizing:border-box;justify-content:center;display:none;">Register →</a>' +
+            '<span id="'+P+'v2-req">Don\\'t see a date that works? Request one →</span>' +
           '</div>' +
           '<div id="'+P+'v2-foot">' +
             '<button id="'+P+'v2-back" class="'+P+'bc">← Details</button>' +
-            '<button id="'+P+'v2-req" class="'+P+'bc">Request a date that works for you</button>' +
           '</div>' +
         '</div>' +
 
@@ -378,18 +366,6 @@ const CLIENT_SCRIPT = `
       });
       var t = document.getElementById(P+v);
       if (t) { t.style.display = "flex"; t.style.flexDirection = "column"; }
-      updateSteps(v);
-    }
-
-    // A8 — reflect the current view in the step indicator.
-    function updateSteps(v) {
-      var cur = v === "v1" ? 1 : v === "v2" ? 2 : 3;
-      var stepsEl = document.getElementById(P+"steps");
-      if (!stepsEl) return;
-      stepsEl.querySelectorAll("[data-step]").forEach(function(el) {
-        var n = parseInt(el.getAttribute("data-step"), 10);
-        el.className = P+"step" + (n === cur ? " active" : n < cur ? " done" : "");
-      });
     }
 
     var lockY = 0;
