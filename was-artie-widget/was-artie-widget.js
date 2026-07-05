@@ -57,7 +57,7 @@ const WIDGET_SOURCE = `// ======================================================
 // ===========================================================================
 
 (function () {
-  var WIDGET_VERSION = "2026-06-30.1"; // bump on every deploy
+  var WIDGET_VERSION = "2026-07-03.1"; // bump on every deploy
   console.log("[Artie widget] version " + WIDGET_VERSION);
 
   var WORKER_URL = "https://was-artie.dave-6bf.workers.dev/"; // <-- SET THIS
@@ -66,7 +66,35 @@ const WIDGET_SOURCE = `// ======================================================
 
   var NAVY = "#28286E", RED = "#DC3C32", CHARCOAL = "#3D3D3D";
   var Z = 2147483000; // above page content, below nav/modal (max int)
-  var CLAMP_PX = 200; // collapse bot messages taller than this, with a "Show more" toggle
+  var CLAMP_MIN = 260; // floor for the collapse threshold; actual limit adapts to the visible message-area height (see measure())
+
+  // A9 — session persistence. Chat history + open state are saved to
+  // localStorage so a reload or app-switch doesn't wipe the conversation.
+  // Sessions older than SESSION_TTL_MS are treated as stale and dropped.
+  var STORAGE_KEY    = "was_artie_session_v1";
+  var SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+  function saveSession(isOpen) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        v: 1, ts: Date.now(), open: !!isOpen,
+        messages: messages, visitor: visitor
+      }));
+    } catch (e) {} // private mode / quota / disabled — persistence is best-effort
+  }
+  function loadSession() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      var d = JSON.parse(raw);
+      if (!d || d.v !== 1 || !Array.isArray(d.messages)) return null;
+      if (Date.now() - (d.ts || 0) > SESSION_TTL_MS) { clearSession(); return null; }
+      return d;
+    } catch (e) { return null; }
+  }
+  function clearSession() {
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  }
 
   var messages = [];
   var visitor  = {};
@@ -144,7 +172,7 @@ const WIDGET_SOURCE = `// ======================================================
     document.body.appendChild(panel);
   }
 
-  var DEFAULT_CHIPS = ["Upcoming dates?", "Prices?", "Location?"];
+  var DEFAULT_CHIPS = ["Upcoming dates?", "Prices?", "Tell me a joke"];
   var chipsEl = null;
 
   function showChips() {
@@ -184,6 +212,7 @@ const WIDGET_SOURCE = `// ======================================================
       showChips();
     }
     if (open) setTimeout(function () { input.focus(); }, 50);
+    saveSession(open); // A9 — remember open/closed across reloads
   }
 
   // Render a bot message with inline markdown. Handles NESTING: bold can wrap a
@@ -228,8 +257,8 @@ const WIDGET_SOURCE = `// ======================================================
     if (last < str.length) parent.appendChild(document.createTextNode(str.slice(last)));
   }
 
-  function clampBubble(b, inner) {
-    var clamped = "position:relative;max-height:" + CLAMP_PX + "px;overflow:hidden;";
+  function clampBubble(b, inner, limitPx) {
+    var clamped = "position:relative;max-height:" + limitPx + "px;overflow:hidden;";
     inner.setAttribute("style", clamped);
     var fade = el("div", "position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(rgba(255,255,255,0),#fff);pointer-events:none;");
     inner.appendChild(fade);
@@ -263,7 +292,8 @@ const WIDGET_SOURCE = `// ======================================================
     if (!mine) {
       var measure = function () {
         if (inner.getAttribute("data-clamped")) return;
-        if (inner.scrollHeight > CLAMP_PX) { inner.setAttribute("data-clamped", "1"); clampBubble(b, inner); }
+        var limit = Math.max(CLAMP_MIN, Math.round((msgArea.clientHeight || 360) * 0.82));
+        if (inner.scrollHeight > limit) { inner.setAttribute("data-clamped", "1"); clampBubble(b, inner, limit); }
         msgArea.scrollTop = msgArea.scrollHeight;
       };
       measure();
@@ -281,8 +311,15 @@ const WIDGET_SOURCE = `// ======================================================
     input.value = "";
     messages.push({ role: "user", content: text });
     addBubble("user", text);
+    saveSession(panel.style.display !== "none"); // A9 — persist the question immediately
     busy = true;
     var typing = addBubble("assistant", "\\u2026");
+    var typingDots = 1; // A10 — animate the typing indicator
+    var typingTimer = setInterval(function () {
+      typingDots = (typingDots % 3) + 1;
+      typing.textContent = Array(typingDots + 1).join("\\u2022"); // 1..3 bullets
+    }, 400);
+    function stopTyping() { if (typingTimer) { clearInterval(typingTimer); typingTimer = null; } }
     fetch(WORKER_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -290,14 +327,16 @@ const WIDGET_SOURCE = `// ======================================================
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        stopTyping();
         if (typing.parentNode) typing.parentNode.removeChild(typing);
         var reply = data.reply || "Sorry, I didn't catch that.";
         messages.push({ role: "assistant", content: reply });
         addBubble("assistant", reply);
         if (data.handoff) showHandoff();
         busy = false;
+        saveSession(panel.style.display !== "none"); // A9 — persist the reply
       })
-      .catch(function () { typing.textContent = "Connection trouble \\u2014 please email " + EMAIL + "."; busy = false; });
+      .catch(function () { stopTyping(); typing.textContent = "Connection trouble \\u2014 please email " + EMAIL + "."; busy = false; });
   }
 
   function showHandoff() {
@@ -385,7 +424,23 @@ const WIDGET_SOURCE = `// ======================================================
     showChoices();
   }
 
-  function init() { if (!document.body) return setTimeout(init, 200); build(); }
+  // A9 — replay a saved session into the panel on load.
+  function rehydrateSession() {
+    var d = loadSession();
+    if (!d || !d.messages.length) return;
+    messages = d.messages.slice();
+    if (d.visitor) visitor = d.visitor;
+    for (var i = 0; i < messages.length; i++) {
+      addBubble(messages[i].role, messages[i].content);
+    }
+    if (d.open) { panel.style.display = "flex"; setTimeout(function () { input.focus(); }, 50); }
+  }
+
+  function init() {
+    if (!document.body) return setTimeout(init, 200);
+    build();
+    rehydrateSession();
+  }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();
