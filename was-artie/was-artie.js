@@ -83,7 +83,9 @@ HARD RULES:
 - For general course info (what to bring, what to expect, accommodation), use the KNOWLEDGE block.
 - If you don't know something, say so plainly and offer to connect them with Dave or Annalise.
 - If the visitor wants to talk to a person, asks something you can't answer, or seems frustrated, end your reply with the token <<HANDOFF>> on its own line. When you do, keep that reply to a short, warm hand-off line (e.g. "Let me get you connected with Dave or Annalise.") — do NOT print phone numbers, email addresses, or other contact details yourself; the chat shows the visitor those contact options automatically.
-- Stay welcoming and safe; you may be talking with beginners or with parents asking for kids.`;
+- Stay welcoming and safe; you may be talking with beginners or with parents asking for kids.
+
+FOLLOW-UP CHIPS: After your reply, you MAY suggest up to 3 short tappable follow-ups the visitor is likely to want next. Put them on the very last line in EXACTLY this format: <<CHIPS: first | second | third>>. Keep each 1-4 words, phrased the way the visitor would tap it (e.g. "July dates", "What to bring", "Book now", "Tell me a joke"). Suggest only genuinely useful next steps tied to what you just discussed; if nothing fits, omit the line entirely. This line is stripped before the visitor sees the reply and shown as buttons — never rely on it to carry information, and never mention it. Do not add chips on a hand-off reply.`;
 
 function corsHeaders(origin) {
   const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
@@ -390,6 +392,22 @@ export default {
       replyText = replyText.replace(/<<HANDOFF>>/g, "").trim();
     }
 
+    // A7 — parse optional follow-up chips. Always strip the token so it never
+    // shows; only surface chips when we're NOT handing off (the hand-off UI
+    // takes over the panel). Defensive caps: max 3, trimmed, short labels.
+    let chips = [];
+    const chipMatch = replyText.match(/<<CHIPS:([\s\S]*?)>>/);
+    if (chipMatch) {
+      replyText = replyText.replace(chipMatch[0], "").trim();
+      if (!handoff) {
+        chips = chipMatch[1].split("|")
+          .map(c => c.trim())
+          .filter(Boolean)
+          .slice(0, 3)
+          .map(c => c.slice(0, 28));
+      }
+    }
+
     // --- daily-digest logging: scrubbed, short-lived, no PII -----------------
     // Stored only to feed the once-a-day overview; emails/phones are stripped,
     // names are never stored, and entries self-delete after LOG_TTL.
@@ -412,7 +430,7 @@ export default {
       ctx.waitUntil(env.RATE_KV.put(logKey, JSON.stringify(entry), { expirationTtl: LOG_TTL }));
     } catch (e) { console.log("log err", e); }
 
-    return json({ reply: replyText, handoff }, 200, origin);
+    return json({ reply: replyText, handoff, chips }, 200, origin);
   },
 
   // Cron Trigger (set in wrangler.toml). Builds yesterday's digest and emails it.
