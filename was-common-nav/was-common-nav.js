@@ -10,20 +10,26 @@
  *      <script src="https://was-common-nav.dave-6bf.workers.dev/"></script>
  *
  *  The script then builds the nav and footer from the PAGE ITSELF:
- *    • Nav + footer links  →  any element tagged  data-nav="Label"
+ *    - Nav + footer links  ->  any element tagged  data-nav="Label"
  *                              (anchor is taken from that element's own id)
- *    • The red CTA button  →  add  data-nav-cta="true"  to one of them
- *                              (normally the Courses/Dates section)
- *    • Nav order           →  document order, unless you set data-nav-order="N"
- *    • Footer tagline      →  <meta name="was:tagline" content="…"> if present,
- *                              otherwise a sensible default
+ *    - The red CTA button  ->  add  data-nav-cta="true"  to one of them
+ *    - Nav order           ->  document order, unless you set data-nav-order="N"
+ *    - Footer tagline      ->  <meta name="was:tagline" content="..."> or default
  *
- *  Everything else (wordmark, phone, email, socials, logos, copyright, the
- *  Canoe Cove link, Privacy Policy) is global and identical on every site, so
- *  it lives here once.
+ *  The footer's COURSES column is static (same on every site) and links the
+ *  four course subdomains directly, for cross-site internal linking + SEO.
+ *  Everything else global (wordmark, phone, email, socials, logos, copyright,
+ *  Canoe Cove, Privacy Policy) lives here once.
  *
  *  To change anything site-wide: edit this Worker, Save & Deploy. Done.
  *  Cache is 5 minutes, so changes appear within ~5 min (or purge to force it).
+ *
+ *  CHANGELOG
+ *    2026-07-03  Footer redesign: added a static Courses column linking the
+ *                four course subdomains (B1 crosslinks); all columns left-
+ *                aligned for a clean mobile stack; logos 110->84px; dropped the
+ *                duplicate Privacy Policy from the bottom bar (also clears the
+ *                floating chat button overlap); 4/2/1 responsive grid.
  * ========================================================================== */
 
 const NAV_JS = String.raw`
@@ -257,10 +263,27 @@ const NAV_JS = String.raw`
   function makeFooter(items) {
     if (document.querySelector('#was-footer')) return;
 
+    /* Course pages — static crosslinks, identical on every site (SEO + nav).
+       These are the four courses that have their own landing page. */
+    var COURSES = [
+      ['https://discover.wildaboutsailing.com/',    'Discover Sailing'],
+      ['https://learntosail.wildaboutsailing.com/', 'Learn to Sail'],
+      ['https://women.wildaboutsailing.com/',       "Women's Learn to Sail"],
+      ['https://navigation.wildaboutsailing.com/',  'Basic Coastal Navigation']
+    ];
+
     var footer = el('footer', 'background:' + FOOT_BG + ';color:#fff;font-family:Inter,sans-serif;padding:3rem 2rem 0;box-sizing:border-box;width:100%;margin-top:0;');
     footer.id = 'was-footer';
 
-    var grid = el('div', 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:2rem;max-width:1100px;margin:0 auto;padding-bottom:2.5rem;');
+    /* responsive grid templates (4 / 2 / 1 columns) */
+    var GRID_4 = 'display:grid;grid-template-columns:1.4fr 1fr 1fr 1.1fr;gap:2rem;max-width:1100px;margin:0 auto;padding-bottom:2.5rem;';
+    var GRID_2 = 'display:grid;grid-template-columns:1fr 1fr;gap:2rem 2.5rem;max-width:1100px;margin:0 auto;padding-bottom:2.5rem;';
+    var GRID_1 = 'display:grid;grid-template-columns:1fr;gap:2rem;max-width:1100px;margin:0 auto;padding-bottom:2.5rem;';
+    var grid = el('div', GRID_4);
+
+    /* shared styles — every column left-aligned for a clean mobile stack */
+    var HEAD = 'font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:0.1em;text-transform:uppercase;margin:0 0 0.85rem;font-family:Inter,sans-serif;';
+    var LINK = 'color:rgba(255,255,255,0.7);text-decoration:none;font-size:14px;font-family:Inter,sans-serif;padding:3px 0;display:block;';
 
     /* Col 1 — brand */
     var col1 = el('div', 'display:flex;flex-direction:column;gap:0.75rem;');
@@ -279,67 +302,67 @@ const NAV_JS = String.raw`
     socials.appendChild(fb); socials.appendChild(ig);
     col1.appendChild(socials);
 
-    /* Col 2 — quick links (same set the nav uses, plus Privacy) */
-    var col2 = el('div', 'display:flex;flex-direction:column;gap:0.5rem;align-items:center;text-align:center;');
-    col2.appendChild(el('p', 'font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:0.1em;text-transform:uppercase;margin:0 0 0.75rem;font-family:Inter,sans-serif;', 'Quick Links'));
-    var links = items.map(function (it) { return [it.anchor, it.label]; });
-    links.push([POLICY, 'Privacy Policy']);
-    links.forEach(function (l) {
-      var a = el('a', 'color:rgba(255,255,255,0.7);text-decoration:none;font-size:14px;font-family:Inter,sans-serif;padding:3px 0;display:block;', l[1]);
-      a.href = l[0];
-      if (l[0].indexOf('http') === 0) a.target = '_blank';
-      bindAnchor(a);
+    /* Col 2 — Courses (static subdomain crosslinks) */
+    var col2 = el('div', 'display:flex;flex-direction:column;');
+    col2.appendChild(el('p', HEAD, 'Courses'));
+    COURSES.forEach(function (c) {
+      var a = el('a', LINK, c[1]);
+      a.href = c[0];
       col2.appendChild(a);
     });
 
-    /* Col 3 — contact + accreditation logos */
-    var col3 = el('div', 'display:flex;flex-direction:column;gap:0.5rem;');
-    col3.appendChild(el('p', 'font-size:12px;font-weight:600;color:rgba(255,255,255,0.4);letter-spacing:0.1em;text-transform:uppercase;margin:0 0 0.75rem;font-family:Inter,sans-serif;', 'Get in Touch'));
-    var phone = el('a', 'color:rgba(255,255,255,0.7);text-decoration:none;font-size:14px;font-family:Inter,sans-serif;padding:3px 0;display:block;', PHONE_D);
-    phone.href = 'tel:' + PHONE; col3.appendChild(phone);
-    var email = el('a', 'color:rgba(255,255,255,0.7);text-decoration:none;font-size:14px;font-family:Inter,sans-serif;padding:3px 0;display:block;', EMAIL);
-    email.href = 'mailto:' + EMAIL; col3.appendChild(email);
+    /* Col 3 — Explore (page nav items, minus the redundant Courses anchor, plus Privacy) */
+    var col3 = el('div', 'display:flex;flex-direction:column;');
+    col3.appendChild(el('p', HEAD, 'Explore'));
+    items.filter(function (it) { return it.label.toLowerCase() !== 'courses'; })
+         .forEach(function (it) {
+      var a = el('a', LINK, it.label);
+      a.href = it.anchor;
+      bindAnchor(a);
+      col3.appendChild(a);
+    });
+    var pol = el('a', LINK, 'Privacy Policy');
+    pol.href = POLICY; pol.target = '_blank';
+    col3.appendChild(pol);
 
-    var logos = el('div', 'display:flex;gap:12px;align-items:center;margin-top:1rem;flex-wrap:nowrap;');
+    /* Col 4 — contact + accreditation logos */
+    var col4 = el('div', 'display:flex;flex-direction:column;');
+    col4.appendChild(el('p', HEAD, 'Get in Touch'));
+    var phone = el('a', LINK, PHONE_D); phone.href = 'tel:' + PHONE; col4.appendChild(phone);
+    var email = el('a', LINK, EMAIL); email.href = 'mailto:' + EMAIL; col4.appendChild(email);
+    var logos = el('div', 'display:flex;gap:12px;align-items:center;margin-top:1rem;flex-wrap:wrap;');
     var scLink = el('a', 'display:inline-block;flex-shrink:0;');
     scLink.href = SC_URL; scLink.target = '_blank';
-    var scLogo = el('img', 'height:110px;width:auto;background:#fff;padding:8px;border-radius:4px;');
+    var scLogo = el('img', 'height:84px;width:auto;background:#fff;padding:7px;border-radius:4px;');
     scLogo.src = LOGO; scLogo.alt = 'Sail Canada Accredited';
     scLink.appendChild(scLogo);
     var scPrideLink = el('a', 'display:inline-block;flex-shrink:0;');
     scPrideLink.href = SC_PRIDE_URL; scPrideLink.target = '_blank';
-    var scPride = el('img', 'height:110px;width:auto;background:#fff;padding:8px;border-radius:4px;');
+    var scPride = el('img', 'height:84px;width:auto;background:#fff;padding:7px;border-radius:4px;');
     scPride.src = LOGO_PRIDE; scPride.alt = 'Sail Canada 2SLGBTQIA+ Affirming';
     scPrideLink.appendChild(scPride);
     logos.appendChild(scLink); logos.appendChild(scPrideLink);
-    col3.appendChild(logos);
+    col4.appendChild(logos);
 
-    grid.appendChild(col1); grid.appendChild(col2); grid.appendChild(col3);
+    grid.appendChild(col1); grid.appendChild(col2); grid.appendChild(col3); grid.appendChild(col4);
     footer.appendChild(grid);
 
-    /* Bottom bar */
-    var bar = el('div', 'border-top:1px solid rgba(255,255,255,0.1);padding:1rem 0;max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;');
+    /* Bottom bar — copyright + (on subpages) a link home. Privacy Policy lives
+       in the Explore column now, so it's dropped here (removes the duplicate
+       and stops the floating chat button from overlapping it). Extra bottom
+       padding gives the chat launcher dead space to sit in. */
+    var bar = el('div', 'border-top:1px solid rgba(255,255,255,0.1);padding:1rem 0 2rem;max-width:1100px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;');
     bar.appendChild(el('p', 'font-size:12px;color:rgba(255,255,255,0.4);margin:0;font-family:Inter,sans-serif;', '\u00A9 2026 Wild About Sailing. All rights reserved.'));
-    var barRight = el('div', 'display:flex;gap:1.5rem;align-items:center;');
     if (!IS_MAIN) {
       var mainLink = el('a', 'font-size:12px;color:rgba(255,255,255,0.4);text-decoration:none;font-family:Inter,sans-serif;', 'wildaboutsailing.com');
       mainLink.href = HOME; mainLink.target = '_blank';
-      barRight.appendChild(mainLink);
+      bar.appendChild(mainLink);
     }
-    var policy = el('a', 'font-size:12px;color:rgba(255,255,255,0.4);text-decoration:none;font-family:Inter,sans-serif;', 'Privacy Policy');
-    policy.href = POLICY; policy.target = '_blank';
-    barRight.appendChild(policy);
-    bar.appendChild(barRight);
     footer.appendChild(bar);
 
     function checkWidth() {
-      if (window.innerWidth <= 640) {
-        grid.setAttribute('style', 'display:grid;grid-template-columns:1fr;gap:2rem;max-width:1100px;margin:0 auto;padding-bottom:2.5rem;');
-      } else if (window.innerWidth <= 900) {
-        grid.setAttribute('style', 'display:grid;grid-template-columns:1fr 1fr;gap:2rem;max-width:1100px;margin:0 auto;padding-bottom:2.5rem;');
-      } else {
-        grid.setAttribute('style', 'display:grid;grid-template-columns:1fr 1fr 1fr;gap:2rem;max-width:1100px;margin:0 auto;padding-bottom:2.5rem;');
-      }
+      var w = window.innerWidth;
+      grid.setAttribute('style', w <= 640 ? GRID_1 : (w <= 900 ? GRID_2 : GRID_4));
     }
     checkWidth();
     window.addEventListener('resize', checkWidth);
@@ -377,4 +400,3 @@ export default {
     });
   }
 };
-
