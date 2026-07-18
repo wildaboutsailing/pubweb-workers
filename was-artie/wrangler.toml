@@ -13,17 +13,18 @@ compatibility_date = "2026-06-17"   # match was-dash-cal so the deploy stops war
 binding = "RATE_KV"
 id = "7d95f41c51aa4e72a865d6f7195a92ad"
 
-# Daily digest. 15:00 UTC = ~8am Pacific (PDT) / 7am (PST). Change the hour to
-# retime it; it's UTC, so it drifts one hour across daylight saving.
+# Digests. Daily at 15:00 UTC = ~8am Pacific (PDT) / 7am (PST). Weekly Monday
+# at 15:30 UTC, covering the 7 days ending Sunday — this cron string MUST match
+# WEEKLY_CRON in was-artie.js (scheduled() dispatches on it). Times are UTC, so
+# they drift one hour across daylight saving.
 [triggers]
-crons = ["0 15 * * *"]
+crons = ["0 15 * * *", "30 15 * * 1"]
 
 # Keep Artie's console.log visible for debugging.
 [observability]
 enabled = true
 
 # No [vars] block on purpose — every env value (the original four secrets, the
-# four promoted ones, plus DIGEST_MAILER_URL) is an encrypted Secret in the
-# dashboard. Secrets survive deploys and never touch the repo.
-
-
+# four promoted ones, plus RESEND_API_KEY, which replaced BREVO_API_KEY when the
+# digests moved to Resend in July 2026) is an encrypted Secret in the dashboard.
+# Secrets survive deploys and never touch the repo.

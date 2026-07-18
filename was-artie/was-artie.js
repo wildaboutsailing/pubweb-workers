@@ -25,7 +25,7 @@
 //    QUO_API_KEY        Secret     Quo API key
 //    QUO_FROM           Variable   your Quo number, E.164
 //    TEAM_NUMBERS       Variable   cells to alert, comma-separated, E.164
-//    BREVO_API_KEY      Secret     Brevo transactional API key (sends the daily digest)
+//    RESEND_API_KEY     Secret     Resend API key (sends the daily + weekly digests)
 // ===========================================================================
 
 const ALLOWED_ORIGINS = [
@@ -46,12 +46,23 @@ const RATE_LIMIT  = 30;
 const RATE_WINDOW = 3600;
 const KB_TTL      = 600;   // knowledge cache (s)
 const SCHED_TTL   = 300;   // schedule cache (s)
-const LOG_TTL     = 259200; // daily-digest raw log retention (s) = 3 days
-const DIGEST_FROM = "noreply@wildaboutsailing.com"; // Brevo sender (domain is DKIM-verified)
+const LOG_TTL     = 777600; // digest raw log + health counter retention (s) = 9 days (weekly digest needs a full 7)
+const DIGEST_FROM = "noreply@wildaboutsailing.com"; // Resend sender (domain must be verified in Resend)
 const DIGEST_TO   = "dave@wildaboutsailing.com";    // digest recipient
 const QUO_API     = "https://api.openphone.com/v1/messages";
 const CORSIZIO_BASE      = "https://api.corsizio.com/v1";
 const CORSIZIO_MAX_PAGES = 5;
+
+// Claude Haiku 4.5 pricing, USD per million tokens — used only for the weekly
+// digest's cost estimate. Update these if MODEL or Anthropic pricing changes.
+const PRICE_IN          = 1.00;
+const PRICE_OUT         = 5.00;
+const PRICE_CACHE_READ  = 0.10;
+const PRICE_CACHE_WRITE = 1.25;
+
+// Weekly digest cron — must match the second entry in wrangler.toml [triggers];
+// scheduled() uses it to tell the weekly firing apart from the daily one.
+const WEEKLY_CRON = "30 15 * * 1";
 
 const SYSTEM_PROMPT = `You are "First Mate Artie," the friendly AI assistant for Wild About Sailing (WAS), a Sail Canada-accredited sailing school at Canoe Cove Marina, North Saanich BC.
 
@@ -205,7 +216,7 @@ async function getSchedule(env) {
   } catch (e) { console.log("sched err", e); return ""; }
 }
 
-/* ---- Daily digest (Cron -> Claude summary -> Gmail relay) ----------------- */
+/* ---- Daily digest (Cron -> Claude summary -> Resend) ---------------------- */
 // Strip the obvious PII before anything is stored. Heuristic but high-precision
 // for emails and phone numbers; names are simply never stored.
 function scrubPII(s) {
@@ -218,6 +229,56 @@ function pacificDateKey(d) {
   try {
     return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Vancouver", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
   } catch (e) { return d.toISOString().slice(0, 10); }
+}
+
+// Shared by the daily and weekly digests: load one day's scrubbed log entries.
+async function readDayEntries(env, dayKey) {
+  const entries = [];
+  let cursor, pages = 0;
+  do {
+    const res = await env.RATE_KV.list({ prefix: "log:" + dayKey + ":", cursor: cursor });
+    for (let i = 0; i < res.keys.length; i++) {
+      try { const v = await env.RATE_KV.get(res.keys[i].name); if (v) entries.push(JSON.parse(v)); } catch (e) {}
+    }
+    cursor = res.list_complete ? null : res.cursor;
+    pages++;
+  } while (cursor && pages < 10);
+  return entries;
+}
+
+// Health counters (rate-limit blocks, API errors) — one KV key per day per name.
+// Read-modify-write, not atomic: concurrent bumps can occasionally drop one,
+// which is fine at Artie's volume for a weekly health overview.
+function ctrKey(dayKey, name) { return "ctr:" + dayKey + ":" + name; }
+async function bumpCounter(env, name) {
+  try {
+    const key = ctrKey(pacificDateKey(new Date()), name);
+    const cur = parseInt((await env.RATE_KV.get(key)) || "0", 10);
+    await env.RATE_KV.put(key, String(cur + 1), { expirationTtl: LOG_TTL });
+  } catch (e) { console.log("ctr err", e); }
+}
+async function readCounter(env, dayKey, name) {
+  try { return parseInt((await env.RATE_KV.get(ctrKey(dayKey, name))) || "0", 10); }
+  catch (e) { return 0; }
+}
+
+// Both digests email through Resend (replaced Brevo, July 2026).
+async function sendDigestEmail(env, subject, text) {
+  if (!env.RESEND_API_KEY) { console.log("digest: RESEND_API_KEY not set — email skipped"); return false; }
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { "Authorization": "Bearer " + env.RESEND_API_KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        from: "Artie Digest <" + DIGEST_FROM + ">",
+        to: [DIGEST_TO],
+        subject: subject,
+        text: text,
+      }),
+    });
+    if (!r.ok) { console.log("Resend send failed", r.status, (await r.text()).slice(0, 300)); return false; }
+    return true;
+  } catch (e) { console.log("digest send err", e); return false; }
 }
 async function summarizeDay(env, dayKey, entries) {
   let handoffs = 0;
@@ -253,36 +314,121 @@ async function summarizeDay(env, dayKey, entries) {
   }
 }
 async function runDailyDigest(env, dayKeyOverride) {
-  if (!env.BREVO_API_KEY) { console.log("digest: BREVO_API_KEY not set"); return; }
   const dayKey = dayKeyOverride || pacificDateKey(new Date(Date.now() - 24 * 3600 * 1000)); // default: the day that just ended (Pacific)
-  const entries = [];
-  let cursor, pages = 0;
-  do {
-    const res = await env.RATE_KV.list({ prefix: "log:" + dayKey + ":", cursor: cursor });
-    for (let i = 0; i < res.keys.length; i++) {
-      try { const v = await env.RATE_KV.get(res.keys[i].name); if (v) entries.push(JSON.parse(v)); } catch (e) {}
-    }
-    cursor = res.list_complete ? null : res.cursor;
-    pages++;
-  } while (cursor && pages < 10);
-
+  const entries = await readDayEntries(env, dayKey);
   const subject = "Artie daily digest \u2014 " + dayKey + " (" + entries.length + " chats)";
   const body = entries.length === 0
     ? ("No visitor chats were logged for " + dayKey + ".")
     : await summarizeDay(env, dayKey, entries);
+  await sendDigestEmail(env, subject, body);
+}
+
+/* ---- Weekly digest (Cron -> aggregate 7 days -> Claude summary -> Resend) - */
+// Runs Monday morning (Pacific) and covers the 7 days ending Sunday.
+function lastNDayKeys(n) {
+  const keys = [];
+  for (let i = n; i >= 1; i--) keys.push(pacificDateKey(new Date(Date.now() - i * 24 * 3600 * 1000)));
+  return keys;
+}
+function weekdayShort(dayKey) {
+  try { return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", weekday: "short" }).format(new Date(dayKey + "T12:00:00Z")); }
+  catch (e) { return dayKey; }
+}
+function pct(cur, prev) {
+  if (!prev) return "n/a";
+  const p = Math.round(((cur - prev) / prev) * 100);
+  return (p >= 0 ? "+" : "") + p + "%";
+}
+async function summarizeWeek(env, weekLabel, entries) {
+  const lines = entries.map(function (e) {
+    return "- [" + (e.tag || "?") + (e.page ? " | " + e.page : "") + "] Q: " + e.q;
+  }).join("\n").slice(0, 20000);
+  const prompt =
+    "You are writing the TOPICS & KNOWLEDGE GAPS section of a weekly internal digest of ANONYMOUS visitor chats with Artie, "
+    + "the chat assistant for Wild About Sailing (a sailing school). It is for the owner's eyes only.\n\n"
+    + "STRICT: aggregate only. Never include names, emails, phone numbers, or any identifying detail; "
+    + "no verbatim quotes that could identify a person. If an entry contains such a detail, ignore that detail.\n\n"
+    + "Each entry below is one visitor question, tagged [tag | page]. Tags: answered, schedule (dates/prices/availability), "
+    + "unanswered (Artie couldn't help), handoff (visitor was sent to a human).\n\n"
+    + "Write scannable plain text, under ~350 words, covering:\n"
+    + "1. Top topics of the week, noting which course/page they cluster on.\n"
+    + "2. RECURRING KNOWLEDGE GAPS - questions asked MORE THAN ONCE this week that Artie answered poorly or couldn't answer "
+    + "(the unanswered and handoff entries are the strongest signal). Be specific: these become additions to the knowledge Doc. "
+    + "This is the most useful section.\n"
+    + "3. Anything new or unusual this week worth the owner's attention.\n\n"
+    + "Week: " + weekLabel + ". Total entries: " + entries.length + ".\n\n"
+    + "ENTRIES:\n" + lines;
   try {
-    const r = await fetch("https://api.brevo.com/v3/smtp/email", {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "api-key": env.BREVO_API_KEY, "content-type": "application/json", "accept": "application/json" },
-      body: JSON.stringify({
-        sender: { name: "Artie Digest", email: DIGEST_FROM },
-        to: [{ email: DIGEST_TO }],
-        subject: subject,
-        textContent: body,
-      }),
+      headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: MODEL, max_tokens: 900, messages: [{ role: "user", content: prompt }] }),
     });
-    if (!r.ok) console.log("Brevo send failed", r.status, (await r.text()).slice(0, 300));
-  } catch (e) { console.log("digest send err", e); }
+    if (!r.ok) return "Summary call failed (" + r.status + ").";
+    const data = await r.json();
+    const text = (data.content || []).filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("\n").trim();
+    return text || "(no summary produced)";
+  } catch (e) { return "Summary error."; }
+}
+async function runWeeklyDigest(env) {
+  const dayKeys = lastNDayKeys(7);
+  const weekLabel = dayKeys[0] + " to " + dayKeys[6];
+
+  let all = [];
+  const perDay = [];
+  let rlHits = 0, apiErrors = 0;
+  for (let i = 0; i < dayKeys.length; i++) {
+    const dk = dayKeys[i];
+    const entries = await readDayEntries(env, dk);
+    perDay.push({ day: dk, chats: entries.length });
+    all = all.concat(entries);
+    rlHits += await readCounter(env, dk, "rate_limited");
+    apiErrors += await readCounter(env, dk, "api_error");
+  }
+
+  const tags = { answered: 0, schedule: 0, unanswered: 0, handoff: 0 };
+  let convos = 0;
+  const tok = { in: 0, out: 0, cr: 0, cw: 0 };
+  for (let i = 0; i < all.length; i++) {
+    const e = all[i];
+    if (tags[e.tag] != null) tags[e.tag]++;
+    if (e.turns === 1) convos++; // first exchange of a conversation (entries older than this feature have no turns field)
+    if (e.u) { tok.in += e.u.in || 0; tok.out += e.u.out || 0; tok.cr += e.u.cr || 0; tok.cw += e.u.cw || 0; }
+  }
+  const cost = (tok.in * PRICE_IN + tok.out * PRICE_OUT + tok.cr * PRICE_CACHE_READ + tok.cw * PRICE_CACHE_WRITE) / 1e6;
+
+  // Week-over-week: read last week's totals, then overwrite with this week's.
+  let prev = null;
+  try { const v = await env.RATE_KV.get("weekly_prev_totals"); if (v) prev = JSON.parse(v); } catch (e) {}
+  try {
+    await env.RATE_KV.put("weekly_prev_totals",
+      JSON.stringify({ week: weekLabel, msgs: all.length, convos: convos, handoffs: tags.handoff }),
+      { expirationTtl: 45 * 86400 });
+  } catch (e) { console.log("weekly totals save err", e); }
+
+  let busiest = perDay[0];
+  for (let i = 1; i < perDay.length; i++) if (perDay[i].chats > busiest.chats) busiest = perDay[i];
+  const dayLine = perDay.map(function (d) { return weekdayShort(d.day) + " " + d.chats; }).join("  \u00b7  ");
+
+  const summary = all.length === 0 ? "(no chats this week)" : await summarizeWeek(env, weekLabel, all);
+
+  const body =
+    "WEEK AT A GLANCE (" + weekLabel + ")\n"
+    + "- Visitor messages handled: " + all.length + (prev ? " (last week " + prev.msgs + ", " + pct(all.length, prev.msgs) + ")" : "") + "\n"
+    + "- Conversations started: " + convos + (prev ? " (last week " + prev.convos + ", " + pct(convos, prev.convos) + ")" : "") + "\n"
+    + "- Hand-offs to a human: " + tags.handoff + (prev ? " (last week " + prev.handoffs + ")" : "") + "\n"
+    + "- Outcome mix: " + tags.answered + " answered \u00b7 " + tags.schedule + " schedule \u00b7 " + tags.unanswered + " unanswered \u00b7 " + tags.handoff + " hand-off\n"
+    + "- Per day: " + dayLine + "\n"
+    + "- Busiest day: " + weekdayShort(busiest.day) + " " + busiest.day + " (" + busiest.chats + ")\n\n"
+    + "TOPICS & KNOWLEDGE GAPS\n" + summary + "\n\n"
+    + "HEALTH & COST\n"
+    + "- Rate-limit blocks: " + rlHits + "\n"
+    + "- Anthropic API errors: " + apiErrors + "\n"
+    + "- Tokens: " + tok.in + " in \u00b7 " + tok.out + " out \u00b7 " + tok.cr + " cache-read \u00b7 " + tok.cw + " cache-write\n"
+    + "- Estimated chat API cost: $" + cost.toFixed(2) + " USD (chat replies only; excludes the small digest-summary calls)\n";
+
+  const subject = "Artie weekly digest \u2014 " + weekLabel + " (" + all.length + " chats)";
+  await sendDigestEmail(env, subject, body);
 }
 
 export default {
@@ -312,11 +458,20 @@ export default {
       return json({ ok: true, ran: "digest", day: day || "yesterday (default)" }, 200, origin);
     }
 
+    // Manual weekly digest trigger (testing / on-demand). Gated by SHARED_SECRET.
+    // POST { "weeklyNow": true, "secret": "<SHARED_SECRET>" } — covers the 7 days ending yesterday.
+    if (body && body.weeklyNow) {
+      if (body.secret !== env.SHARED_SECRET) return json({ error: "forbidden" }, 403, origin);
+      ctx.waitUntil(runWeeklyDigest(env));
+      return json({ ok: true, ran: "weekly digest" }, 200, origin);
+    }
+
     const ip = request.headers.get("CF-Connecting-IP") || "unknown";
     try {
       const key = `rl:${ip}`;
       const current = parseInt((await env.RATE_KV.get(key)) || "0", 10);
       if (current >= RATE_LIMIT) {
+        ctx.waitUntil(bumpCounter(env, "rate_limited"));
         return json({ reply: "I'm fielding a lot of questions right now \u2014 please email annalise@wildaboutsailing.com and we'll get right back to you.", handoff: false }, 429, origin);
       }
       ctx.waitUntil(env.RATE_KV.put(key, String(current + 1), { expirationTtl: RATE_WINDOW }));
@@ -361,6 +516,7 @@ export default {
       (schedule || "(Live schedule temporarily unavailable \u2014 direct people to the registration page for current dates and prices.)");
 
     let replyText = "";
+    let usage = null; // Anthropic token usage for this reply — logged for the weekly cost report
     try {
       const ar = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -377,12 +533,15 @@ export default {
       });
       if (!ar.ok) {
         console.log("Anthropic error", ar.status, await ar.text());
+        ctx.waitUntil(bumpCounter(env, "api_error"));
         return json({ reply: "Sorry \u2014 I hit a snag. Leave your number below and we'll text you directly.", handoff: true }, 200, origin);
       }
       const data = await ar.json();
       replyText = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+      usage = data.usage || null;
     } catch (e) {
       console.log("fetch error", e);
+      ctx.waitUntil(bumpCounter(env, "api_error"));
       return json({ reply: "Sorry \u2014 connection trouble on my end. Leave your number below and we'll reach out.", handoff: true }, 200, origin);
     }
 
@@ -425,6 +584,16 @@ export default {
         a: scrubPII(replyText),
         tag: tag,
         handoff: handoff,
+        // turns === 1 marks the first exchange of a conversation (used by the
+        // weekly digest to count conversations vs. total messages).
+        turns: messages.length,
+        // Token usage for the weekly cost report; null if the response had none.
+        u: usage ? {
+          in:  usage.input_tokens || 0,
+          out: usage.output_tokens || 0,
+          cr:  usage.cache_read_input_tokens || 0,
+          cw:  usage.cache_creation_input_tokens || 0,
+        } : null,
       };
       const logKey = "log:" + pacificDateKey(new Date()) + ":" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
       ctx.waitUntil(env.RATE_KV.put(logKey, JSON.stringify(entry), { expirationTtl: LOG_TTL }));
@@ -433,9 +602,11 @@ export default {
     return json({ reply: replyText, handoff, chips }, 200, origin);
   },
 
-  // Cron Trigger (set in wrangler.toml). Builds yesterday's digest and emails it.
+  // Cron Triggers (set in wrangler.toml). Daily fires every day at 15:00 UTC;
+  // the weekly fires Monday 15:30 UTC and covers the 7 days ending Sunday.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runDailyDigest(env));
+    if (event.cron === WEEKLY_CRON) ctx.waitUntil(runWeeklyDigest(env));
+    else ctx.waitUntil(runDailyDigest(env));
   },
 };
 
