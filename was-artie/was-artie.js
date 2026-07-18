@@ -60,9 +60,13 @@ const PRICE_OUT         = 5.00;
 const PRICE_CACHE_READ  = 0.10;
 const PRICE_CACHE_WRITE = 1.25;
 
-// Weekly digest cron — must match the second entry in wrangler.toml [triggers];
-// scheduled() uses it to tell the weekly firing apart from the daily one.
-const WEEKLY_CRON = "30 15 * * 1";
+// Daily digest cron — must match the first entry in wrangler.toml [triggers].
+// scheduled() treats a firing that matches this string as the daily digest and
+// ANY other firing as the weekly. (Gotcha: Cloudflare cron day-of-week is not
+// standard cron — days are 1-7 with 1 = SUNDAY, so an innocent "* * 1" fires
+// Sunday. The weekly cron in wrangler.toml therefore uses the unambiguous
+// "MON" name, and the dispatch here deliberately avoids matching on it.)
+const DAILY_CRON = "0 15 * * *";
 
 const SYSTEM_PROMPT = `You are "First Mate Artie," the friendly AI assistant for Wild About Sailing (WAS), a Sail Canada-accredited sailing school at Canoe Cove Marina, North Saanich BC.
 
@@ -634,8 +638,8 @@ export default {
   // Cron Triggers (set in wrangler.toml). Daily fires every day at 15:00 UTC;
   // the weekly fires Monday 15:30 UTC and covers the 7 days ending Sunday.
   async scheduled(event, env, ctx) {
-    if (event.cron === WEEKLY_CRON) ctx.waitUntil(runWeeklyDigest(env));
-    else ctx.waitUntil(runDailyDigest(env));
+    if (event.cron === DAILY_CRON) ctx.waitUntil(runDailyDigest(env));
+    else ctx.waitUntil(runWeeklyDigest(env));
   },
 };
 

@@ -14,11 +14,14 @@ binding = "RATE_KV"
 id = "7d95f41c51aa4e72a865d6f7195a92ad"
 
 # Digests. Daily at 15:00 UTC = ~8am Pacific (PDT) / 7am (PST). Weekly Monday
-# at 15:30 UTC, covering the 7 days ending Sunday — this cron string MUST match
-# WEEKLY_CRON in was-artie.js (scheduled() dispatches on it). Times are UTC, so
-# they drift one hour across daylight saving.
+# at 15:30 UTC, covering the 7 days ending Sunday. GOTCHA: Cloudflare cron
+# day-of-week is 1-7 with 1 = SUNDAY (not standard cron!) — "30 15 * * 1"
+# fires Sunday. Use day NAMES here to stay unambiguous. The daily cron string
+# must match DAILY_CRON in was-artie.js (scheduled() dispatches on it; any
+# non-matching firing runs the weekly). Times are UTC, so they drift one hour
+# across daylight saving.
 [triggers]
-crons = ["0 15 * * *", "30 15 * * 1"]
+crons = ["0 15 * * *", "30 15 * * MON"]
 
 # Keep Artie's console.log visible for debugging.
 [observability]
@@ -28,3 +31,5 @@ enabled = true
 # four promoted ones, plus RESEND_API_KEY, which replaced BREVO_API_KEY when the
 # digests moved to Resend in July 2026) is an encrypted Secret in the dashboard.
 # Secrets survive deploys and never touch the repo.
+
+
