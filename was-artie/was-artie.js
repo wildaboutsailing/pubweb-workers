@@ -231,19 +231,25 @@ function pacificDateKey(d) {
   } catch (e) { return d.toISOString().slice(0, 10); }
 }
 
-// Shared by the daily and weekly digests: load one day's scrubbed log entries.
+// Load one day's scrubbed log entries (daily digest only — the weekly digest
+// reads the small per-day rollups instead; see runDailyDigest).
+// MAX_LOG_READS caps per-entry KV gets so a busy day can't blow the free
+// plan's ~50 subrequests-per-invocation limit and kill the whole run.
+const MAX_LOG_READS = 40;
 async function readDayEntries(env, dayKey) {
   const entries = [];
+  let truncated = false;
   let cursor, pages = 0;
   do {
     const res = await env.RATE_KV.list({ prefix: "log:" + dayKey + ":", cursor: cursor });
     for (let i = 0; i < res.keys.length; i++) {
+      if (entries.length >= MAX_LOG_READS) { truncated = true; break; }
       try { const v = await env.RATE_KV.get(res.keys[i].name); if (v) entries.push(JSON.parse(v)); } catch (e) {}
     }
-    cursor = res.list_complete ? null : res.cursor;
+    cursor = res.list_complete || truncated ? null : res.cursor;
     pages++;
   } while (cursor && pages < 10);
-  return entries;
+  return { entries: entries, truncated: truncated };
 }
 
 // Health counters (rate-limit blocks, API errors) — one KV key per day per name.
@@ -315,12 +321,37 @@ async function summarizeDay(env, dayKey, entries) {
 }
 async function runDailyDigest(env, dayKeyOverride) {
   const dayKey = dayKeyOverride || pacificDateKey(new Date(Date.now() - 24 * 3600 * 1000)); // default: the day that just ended (Pacific)
-  const entries = await readDayEntries(env, dayKey);
-  const subject = "Artie daily digest \u2014 " + dayKey + " (" + entries.length + " chats)";
-  const body = entries.length === 0
+  const read = await readDayEntries(env, dayKey);
+  const entries = read.entries;
+
+  // Per-day rollup for the weekly digest: one small KV value per day, so the
+  // weekly run reads 7 keys instead of re-reading every raw log entry (which
+  // exceeded the subrequest cap and silently killed the run).
+  const tags = { answered: 0, schedule: 0, unanswered: 0, handoff: 0 };
+  let convos = 0;
+  const tok = { in: 0, out: 0, cr: 0, cw: 0 };
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    if (tags[e.tag] != null) tags[e.tag]++;
+    if (e.turns === 1) convos++; // first exchange of a conversation
+    if (e.u) { tok.in += e.u.in || 0; tok.out += e.u.out || 0; tok.cr += e.u.cr || 0; tok.cw += e.u.cw || 0; }
+  }
+  const rl = await readCounter(env, dayKey, "rate_limited");
+  const apiErr = await readCounter(env, dayKey, "api_error");
+
+  const summary = entries.length === 0
     ? ("No visitor chats were logged for " + dayKey + ".")
     : await summarizeDay(env, dayKey, entries);
-  await sendDigestEmail(env, subject, body);
+
+  try {
+    await env.RATE_KV.put("daystats:" + dayKey, JSON.stringify({
+      chats: entries.length, truncated: read.truncated, convos: convos,
+      tags: tags, tok: tok, rl: rl, apiErr: apiErr, summary: summary,
+    }), { expirationTtl: LOG_TTL });
+  } catch (e) { console.log("daystats save err", e); }
+
+  const subject = "Artie daily digest \u2014 " + dayKey + " (" + entries.length + (read.truncated ? "+" : "") + " chats)";
+  await sendDigestEmail(env, subject, summary);
 }
 
 /* ---- Weekly digest (Cron -> aggregate 7 days -> Claude summary -> Resend) - */
@@ -339,25 +370,21 @@ function pct(cur, prev) {
   const p = Math.round(((cur - prev) / prev) * 100);
   return (p >= 0 ? "+" : "") + p + "%";
 }
-async function summarizeWeek(env, weekLabel, entries) {
-  const lines = entries.map(function (e) {
-    return "- [" + (e.tag || "?") + (e.page ? " | " + e.page : "") + "] Q: " + e.q;
-  }).join("\n").slice(0, 20000);
+async function summarizeWeek(env, weekLabel, daySummariesText) {
   const prompt =
-    "You are writing the TOPICS & KNOWLEDGE GAPS section of a weekly internal digest of ANONYMOUS visitor chats with Artie, "
+    "You are writing the TOPICS & KNOWLEDGE GAPS section of a weekly internal digest for Artie, "
     + "the chat assistant for Wild About Sailing (a sailing school). It is for the owner's eyes only.\n\n"
     + "STRICT: aggregate only. Never include names, emails, phone numbers, or any identifying detail; "
-    + "no verbatim quotes that could identify a person. If an entry contains such a detail, ignore that detail.\n\n"
-    + "Each entry below is one visitor question, tagged [tag | page]. Tags: answered, schedule (dates/prices/availability), "
-    + "unanswered (Artie couldn't help), handoff (visitor was sent to a human).\n\n"
+    + "no verbatim quotes that could identify a person.\n\n"
+    + "Below are Artie's DAILY digest summaries for each day of the week. Synthesize them into a weekly view — "
+    + "do not just concatenate them.\n\n"
     + "Write scannable plain text, under ~350 words, covering:\n"
     + "1. Top topics of the week, noting which course/page they cluster on.\n"
-    + "2. RECURRING KNOWLEDGE GAPS - questions asked MORE THAN ONCE this week that Artie answered poorly or couldn't answer "
-    + "(the unanswered and handoff entries are the strongest signal). Be specific: these become additions to the knowledge Doc. "
-    + "This is the most useful section.\n"
+    + "2. RECURRING KNOWLEDGE GAPS - gaps or unanswered questions that show up on MORE THAN ONE day. "
+    + "Be specific: these become additions to the knowledge Doc. This is the most useful section.\n"
     + "3. Anything new or unusual this week worth the owner's attention.\n\n"
-    + "Week: " + weekLabel + ". Total entries: " + entries.length + ".\n\n"
-    + "ENTRIES:\n" + lines;
+    + "Week: " + weekLabel + ".\n\n"
+    + "DAILY SUMMARIES:\n" + daySummariesText.slice(0, 20000);
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -374,26 +401,27 @@ async function runWeeklyDigest(env) {
   const dayKeys = lastNDayKeys(7);
   const weekLabel = dayKeys[0] + " to " + dayKeys[6];
 
-  let all = [];
+  // Read the 7 per-day rollups written by the daily digest (7 KV gets total \u2014
+  // NOT the raw log entries, which can exceed the subrequest cap).
   const perDay = [];
-  let rlHits = 0, apiErrors = 0;
+  const missing = [];
+  let msgs = 0, convos = 0, rlHits = 0, apiErrors = 0;
+  const tags = { answered: 0, schedule: 0, unanswered: 0, handoff: 0 };
+  const tok = { in: 0, out: 0, cr: 0, cw: 0 };
+  let summariesText = "";
   for (let i = 0; i < dayKeys.length; i++) {
     const dk = dayKeys[i];
-    const entries = await readDayEntries(env, dk);
-    perDay.push({ day: dk, chats: entries.length });
-    all = all.concat(entries);
-    rlHits += await readCounter(env, dk, "rate_limited");
-    apiErrors += await readCounter(env, dk, "api_error");
-  }
-
-  const tags = { answered: 0, schedule: 0, unanswered: 0, handoff: 0 };
-  let convos = 0;
-  const tok = { in: 0, out: 0, cr: 0, cw: 0 };
-  for (let i = 0; i < all.length; i++) {
-    const e = all[i];
-    if (tags[e.tag] != null) tags[e.tag]++;
-    if (e.turns === 1) convos++; // first exchange of a conversation (entries older than this feature have no turns field)
-    if (e.u) { tok.in += e.u.in || 0; tok.out += e.u.out || 0; tok.cr += e.u.cr || 0; tok.cw += e.u.cw || 0; }
+    let d = null;
+    try { const v = await env.RATE_KV.get("daystats:" + dk); if (v) d = JSON.parse(v); } catch (e) {}
+    if (!d) { missing.push(dk); perDay.push({ day: dk, chats: 0 }); continue; }
+    perDay.push({ day: dk, chats: d.chats || 0 });
+    msgs += d.chats || 0;
+    convos += d.convos || 0;
+    rlHits += d.rl || 0;
+    apiErrors += d.apiErr || 0;
+    if (d.tags) for (const k in tags) tags[k] += d.tags[k] || 0;
+    if (d.tok) { tok.in += d.tok.in || 0; tok.out += d.tok.out || 0; tok.cr += d.tok.cr || 0; tok.cw += d.tok.cw || 0; }
+    summariesText += "=== " + weekdayShort(dk) + " " + dk + " (" + (d.chats || 0) + " chats) ===\n" + (d.summary || "(no summary)") + "\n\n";
   }
   const cost = (tok.in * PRICE_IN + tok.out * PRICE_OUT + tok.cr * PRICE_CACHE_READ + tok.cw * PRICE_CACHE_WRITE) / 1e6;
 
@@ -402,7 +430,7 @@ async function runWeeklyDigest(env) {
   try { const v = await env.RATE_KV.get("weekly_prev_totals"); if (v) prev = JSON.parse(v); } catch (e) {}
   try {
     await env.RATE_KV.put("weekly_prev_totals",
-      JSON.stringify({ week: weekLabel, msgs: all.length, convos: convos, handoffs: tags.handoff }),
+      JSON.stringify({ week: weekLabel, msgs: msgs, convos: convos, handoffs: tags.handoff }),
       { expirationTtl: 45 * 86400 });
   } catch (e) { console.log("weekly totals save err", e); }
 
@@ -410,24 +438,25 @@ async function runWeeklyDigest(env) {
   for (let i = 1; i < perDay.length; i++) if (perDay[i].chats > busiest.chats) busiest = perDay[i];
   const dayLine = perDay.map(function (d) { return weekdayShort(d.day) + " " + d.chats; }).join("  \u00b7  ");
 
-  const summary = all.length === 0 ? "(no chats this week)" : await summarizeWeek(env, weekLabel, all);
+  const summary = msgs === 0 ? "(no chats this week)" : await summarizeWeek(env, weekLabel, summariesText);
 
   const body =
     "WEEK AT A GLANCE (" + weekLabel + ")\n"
-    + "- Visitor messages handled: " + all.length + (prev ? " (last week " + prev.msgs + ", " + pct(all.length, prev.msgs) + ")" : "") + "\n"
+    + "- Visitor messages handled: " + msgs + (prev ? " (last week " + prev.msgs + ", " + pct(msgs, prev.msgs) + ")" : "") + "\n"
     + "- Conversations started: " + convos + (prev ? " (last week " + prev.convos + ", " + pct(convos, prev.convos) + ")" : "") + "\n"
     + "- Hand-offs to a human: " + tags.handoff + (prev ? " (last week " + prev.handoffs + ")" : "") + "\n"
     + "- Outcome mix: " + tags.answered + " answered \u00b7 " + tags.schedule + " schedule \u00b7 " + tags.unanswered + " unanswered \u00b7 " + tags.handoff + " hand-off\n"
     + "- Per day: " + dayLine + "\n"
-    + "- Busiest day: " + weekdayShort(busiest.day) + " " + busiest.day + " (" + busiest.chats + ")\n\n"
-    + "TOPICS & KNOWLEDGE GAPS\n" + summary + "\n\n"
+    + "- Busiest day: " + weekdayShort(busiest.day) + " " + busiest.day + " (" + busiest.chats + ")\n"
+    + (missing.length ? "- No data for: " + missing.join(", ") + " (daily digest hadn't run for those days)\n" : "")
+    + "\nTOPICS & KNOWLEDGE GAPS\n" + summary + "\n\n"
     + "HEALTH & COST\n"
     + "- Rate-limit blocks: " + rlHits + "\n"
     + "- Anthropic API errors: " + apiErrors + "\n"
     + "- Tokens: " + tok.in + " in \u00b7 " + tok.out + " out \u00b7 " + tok.cr + " cache-read \u00b7 " + tok.cw + " cache-write\n"
     + "- Estimated chat API cost: $" + cost.toFixed(2) + " USD (chat replies only; excludes the small digest-summary calls)\n";
 
-  const subject = "Artie weekly digest \u2014 " + weekLabel + " (" + all.length + " chats)";
+  const subject = "Artie weekly digest \u2014 " + weekLabel + " (" + msgs + " chats)";
   await sendDigestEmail(env, subject, body);
 }
 
