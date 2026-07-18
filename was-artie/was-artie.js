@@ -544,9 +544,17 @@ export default {
         + focus;
     }
 
+    // Joke variety: every conversation presents the joke sheet in the same
+    // order, so the model reliably gravitates to the same joke. Inject a
+    // random per-conversation pick into this UNCACHED block (the cached
+    // knowledge block is untouched) so Artie rotates through the sheet.
+    const jokePick = 1 + Math.floor(Math.random() * 24);
+
     const scheduleBlock = contextLine +
       "CURRENT SCHEDULE \u2014 live from Corsizio, may be a few minutes out of date. The registration page is always the final word on availability and booking.\n" +
-      (schedule || "(Live schedule temporarily unavailable \u2014 direct people to the registration page for current dates and prices.)");
+      (schedule || "(Live schedule temporarily unavailable \u2014 direct people to the registration page for current dates and prices.)") +
+      "\n\nJOKE ROTATION: if (and only if) a light joke fits this conversation, use roughly the " + jokePick +
+      "th joke counting from the top of the joke sheet, wrapping around past the end if there are fewer. Never default to the first joke or repeat one already told in this conversation.";
 
     let replyText = "";
     let usage = null; // Anthropic token usage for this reply — logged for the weekly cost report
