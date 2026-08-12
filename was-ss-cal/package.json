@@ -1,0 +1,15 @@
+{
+  "name": "was-ss-cal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Saltspring Island course calendar config Worker for wildaboutsailing.com",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

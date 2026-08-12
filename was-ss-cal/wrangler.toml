@@ -1,0 +1,31 @@
+# was-ss-cal — Saltspring Island course calendar (thin config Worker)
+#
+# Layout follows the house pattern used by every other Worker in this repo:
+# the entry point is <worker-name>.js at the folder root, not src/index.js.
+
+name = "was-ss-cal"
+main = "was-ss-cal.js"
+
+# New Worker as of August 2026, so this date is correct as written — unlike the
+# migrated Workers, there is no live deployment to verify it against.
+compatibility_date = "2026-08-01"
+
+# Serve at *.workers.dev. Required — without it the Worker deploys but has no
+# public URL, and the Carrd script tag 404s.
+workers_dev = true
+
+# Keep console.log visible for debugging.
+[observability]
+enabled = true
+
+# No [vars] block — no secrets or environment-specific config of its own.
+#
+# No [triggers] — this Worker only serves GET requests for the calendar
+# widget script.
+#
+# account_id is not set here. It is supplied by CI via the
+# CLOUDFLARE_ACCOUNT_ID secret, or by `wrangler login` when deploying by hand.
+#
+# NOTE: this config uses no buttonLayout / buttonTheme keys — same as
+# was-lts-cal-v3. was-women-cal sets buttonLayout = "row". Worth standardizing
+# across the calendar Workers once all migrations are done.
