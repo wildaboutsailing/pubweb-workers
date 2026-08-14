@@ -30,6 +30,13 @@ const CLIENT_SCRIPT = `
    date order, so courses[0] is effectively arbitrary.
 
    CHANGELOG
+     v4.1 2026-08-13
+       - Removed the "N courses start this day" prompt. Configs are now
+         scoped so a calendar holds one course type, and two courses never
+         share a start day. The cycling logic in the click handler is kept
+         as a safety net — if a config is ever widened again, every course
+         stays reachable rather than silently unbookable — but with no
+         prompt, that state is not discoverable. Keep configs narrow.
      v4  2026-08-13
        - FIX: modal header now follows the selected course. setHeader() is
               called from populateInfo(), which is the single point every
@@ -249,14 +256,6 @@ const CLIENT_SCRIPT = `
       return out;
     }
 
-    // How many distinct courses share this course's START day. Drives the
-    // "tap again to switch" prompt.
-    function sameDayCount(c) {
-      if (!c) return 0;
-      var s = new Date(c.startDate);
-      var k = s.getUTCFullYear()+"-"+s.getUTCMonth()+"-"+s.getUTCDate();
-      return distinctCourses(dmap()[k]).length;
-    }
 
     // True if ANY entry for this day belongs to the given course key.
     function dayHasCourse(entries, key) {
@@ -357,8 +356,6 @@ const CLIENT_SCRIPT = `
       // v4 — location: one calendar can now span Canoe Cove and Ganges
       "#"+P+"v2-info-loc{font-size:12px;color:#666;margin-bottom:2px;font-family:Lato,sans-serif;}",
       "#"+P+"v2-info-spots{font-size:12px;color:#666;margin-bottom:8px;font-family:Lato,sans-serif;}",
-      // v4 — shown only when two courses start the same day
-      "#"+P+"v2-info-more{display:none;font-size:11px;font-weight:700;color:"+RED+";margin-bottom:8px;font-family:Lato,sans-serif;}",
       // Quiet fallback link under Register (demoted from a competing button)
       "#"+P+"v2-req{display:block;margin-top:8px;text-align:center;font-family:Lato,sans-serif;font-size:12px;color:#8a8aa0;text-decoration:underline;cursor:pointer;}",
       "#"+P+"v2-req:hover{color:"+NAVY+";}",
@@ -425,7 +422,6 @@ const CLIENT_SCRIPT = `
             '<div id="'+P+'v2-info-date"></div>' +
             '<div id="'+P+'v2-info-loc"></div>' +
             '<div id="'+P+'v2-info-spots"></div>' +
-            '<div id="'+P+'v2-info-more"></div>' +
             '<a id="'+P+'v2-reg" class="'+P+'br" href="#" target="_blank" style="width:100%;box-sizing:border-box;justify-content:center;display:none;">Register →</a>' +
             '<span id="'+P+'v2-req">Don\\'t see a date that works? Request one →</span>' +
           '</div>' +
@@ -483,9 +479,6 @@ const CLIENT_SCRIPT = `
       document.getElementById(P+"v2-info-date").textContent  = "";
       document.getElementById(P+"v2-info-loc").textContent   = "";
       document.getElementById(P+"v2-info-spots").textContent = "";
-      var more = document.getElementById(P+"v2-info-more");
-      more.textContent = "";
-      more.style.display = "none";
       document.getElementById(P+"v2-reg").style.display = "none";
     }
 
@@ -562,15 +555,6 @@ const CLIENT_SCRIPT = `
       document.getElementById(P+"v2-info-date").textContent  = fmtRange(c.startDate, c.endDate);
       document.getElementById(P+"v2-info-loc").textContent   = shortLocation(c.location);
       document.getElementById(P+"v2-info-spots").textContent = s;
-      var more = document.getElementById(P+"v2-info-more");
-      var n = sameDayCount(c);
-      if (n > 1) {
-        more.textContent = n + " courses start this day — tap the date again to switch.";
-        more.style.display = "block";
-      } else {
-        more.textContent = "";
-        more.style.display = "none";
-      }
       var reg = document.getElementById(P+"v2-reg");
       reg.href        = c.formUrl || c.pageUrl;
       reg.textContent = (s === "Full" ? "Join waitlist" : "Register") + " →";
@@ -608,10 +592,10 @@ const CLIENT_SCRIPT = `
         var list = distinctCourses(entries);
         if (!list.length) return;
         cell.addEventListener("click", function() {
-          // Select the whole COURSE, not just the clicked day. Where several
-          // courses share the day, tapping again advances to the next one —
-          // otherwise the second course on Sep 12 / Sep 20 at Ganges would be
-          // unbookable, which is what happened before v4.
+          // Select the whole COURSE, not just the clicked day. Safety net:
+          // if a day ever holds more than one course, repeated taps advance
+          // through them rather than leaving the extras unbookable. Configs
+          // should be narrow enough that this never fires.
           var idx = 0;
           for (var i = 0; i < list.length; i++) {
             if (courseKey(list[i]) === modalSelected) { idx = (i + 1) % list.length; break; }
