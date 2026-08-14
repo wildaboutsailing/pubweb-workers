@@ -5,9 +5,10 @@ const CLIENT_SCRIPT = `
 /* ============================================================================
    WAS Calendar Engine — served browser script
    ----------------------------------------------------------------------------
-   Shared engine for all four course calendars (Discover / Learn to Sail /
-   camp / Skipper). Served as application/javascript by the was-cal-engine
-   Worker; runs in the visitor's browser.
+   Shared engine for every course calendar on the site (Discover / Learn to
+   Sail / camp / Skipper / Salt Spring / Women's). Served as
+   application/javascript by the was-cal-engine Worker; runs in the visitor's
+   browser.
 
    EDITING: this whole script lives inside a template literal in the Worker
    source (const CLIENT_SCRIPT = \`…\`). Backslashes and \${ in the Worker source
@@ -15,7 +16,37 @@ const CLIENT_SCRIPT = `
    hand-edit the Worker, preserve that escaping — regex literals like
    /\\s*\\(.*$/ will break otherwise and the calendar buttons silently vanish.
 
+   ONE THING TO UNDERSTAND BEFORE EDITING
+   --------------------------------------
+   A calendar may hold MORE THAN ONE COURSE. Thin configs match on a name
+   substring, and some of those substrings are places rather than course
+   types — was-ss-cal matches "salt spring", which catches three different
+   courses at two different prices; was-women-cal matches "women", which
+   catches the Sidney course at \\$725 and the Ganges course at \\$840.
+
+   So: anything shown in the modal header or info box must be derived from
+   the SELECTED course, never from courses[0] and never from whichever
+   course happened to open the modal. Corsizio does not return the array in
+   date order, so courses[0] is effectively arbitrary.
+
    CHANGELOG
+     v4  2026-08-13
+       - FIX: modal header now follows the selected course. setHeader() is
+              called from populateInfo(), which is the single point every
+              selection change already passes through. Previously the header
+              was set once on open and never updated, so a calendar holding
+              two courses would show one course's price against the other
+              course's dates (\\$725 shown against a \\$840 Ganges booking).
+       - FIX: days with more than one course starting are now all reachable.
+              primaryEntry() returns only the first "start" entry, so on
+              Sep 12 and Sep 20 at Ganges — two boats, two courses, same
+              dock — the second course could not be selected or booked at
+              all. Repeated taps on such a day now cycle through them, with
+              a prompt in the info box.
+       - ADD: location line in the info box. Necessary now that one calendar
+              can span Canoe Cove and Ganges Harbour.
+       - FIX: page buttons and the "← Details" back button now use the next
+              upcoming course / the selected course rather than courses[0].
      v3  2026-07-03
        - A6: colour-dot legend under the calendar (Start day / Course day /
              Selected).
@@ -90,6 +121,21 @@ const CLIENT_SCRIPT = `
       if (!c) return "";
       if (c.id) return String(c.id);
       return (c.startDate || "") + "|" + (c.name || "");
+    }
+
+    // Corsizio locations arrive as long postal strings —
+    //   "Canoe Cove Marina, 2300 Canoe Cove Rd, North Saanich,, BC, Canada"
+    // Reduce to "Canoe Cove Marina, North Saanich" for the info box: drop the
+    // province/country tail and any street-number fragment, keep the first
+    // two meaningful parts.
+    function shortLocation(loc) {
+      if (!loc) return "";
+      var parts = loc.split(",").map(function(s) { return s.trim(); })
+                     .filter(function(s) { return s.length > 0; });
+      var tail = { "canada":1, "bc":1, "british columbia":1, "b.c.":1, "ca":1 };
+      while (parts.length > 1 && tail[parts[parts.length-1].toLowerCase()]) parts.pop();
+      parts = parts.filter(function(p) { return !/^\\d/.test(p); });
+      return parts.slice(0, 2).join(", ");
     }
 
       var btnLayout = cfg.buttonLayout === "row" ? "row" : "column";
@@ -185,6 +231,33 @@ const CLIENT_SCRIPT = `
       return entries[0];
     }
 
+    // Every DISTINCT course touching this day, starts listed before
+    // continuations. primaryEntry() above is fine for choosing a dot colour,
+    // but selection must be able to reach all of them — two boats can run
+    // two different courses from the same dock on the same day, and before
+    // v4 only the first was clickable.
+    function distinctCourses(entries) {
+      var out = [], seen = {};
+      if (!entries || !entries.length) return out;
+      ["start", "cont"].forEach(function(t) {
+        entries.forEach(function(e) {
+          if (e.type !== t) return;
+          var k = courseKey(e.course);
+          if (!seen[k]) { seen[k] = 1; out.push(e.course); }
+        });
+      });
+      return out;
+    }
+
+    // How many distinct courses share this course's START day. Drives the
+    // "tap again to switch" prompt.
+    function sameDayCount(c) {
+      if (!c) return 0;
+      var s = new Date(c.startDate);
+      var k = s.getUTCFullYear()+"-"+s.getUTCMonth()+"-"+s.getUTCDate();
+      return distinctCourses(dmap()[k]).length;
+    }
+
     // True if ANY entry for this day belongs to the given course key.
     function dayHasCourse(entries, key) {
       if (!entries || !key) return false;
@@ -203,6 +276,14 @@ const CLIENT_SCRIPT = `
       if (!best) return null;
       var s = new Date(best.startDate);
       return { key: s.getUTCFullYear()+"-"+s.getUTCMonth()+"-"+s.getUTCDate(), course: best };
+    }
+
+    // The course the page buttons should open with. NOT courses[0] — Corsizio
+    // does not return the list in date order, so courses[0] is arbitrary and
+    // on a multi-course calendar it is usually the wrong one.
+    function leadCourse() {
+      var f = firstDateKey();
+      return (f && f.course) || courses[0] || null;
     }
 
     // ── Styles ─────────────────────────────────────────────────────────────
@@ -272,8 +353,12 @@ const CLIENT_SCRIPT = `
       "."+P+"lg-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}",
       // Info box — always present, shown/hidden — reserves space
       "#"+P+"v2-info{padding:10px 14px;flex:1;min-height:0;border-top:1px solid #e8ecf0;margin:0 0 0;}",
-      "#"+P+"v2-info-date{font-size:14px;font-weight:700;color:"+NAVY+";margin-bottom:3px;font-family:Lato,sans-serif;}",
-      "#"+P+"v2-info-spots{font-size:12px;color:#666;margin-bottom:10px;font-family:Lato,sans-serif;}",
+      "#"+P+"v2-info-date{font-size:14px;font-weight:700;color:"+NAVY+";margin-bottom:2px;font-family:Lato,sans-serif;}",
+      // v4 — location: one calendar can now span Canoe Cove and Ganges
+      "#"+P+"v2-info-loc{font-size:12px;color:#666;margin-bottom:2px;font-family:Lato,sans-serif;}",
+      "#"+P+"v2-info-spots{font-size:12px;color:#666;margin-bottom:8px;font-family:Lato,sans-serif;}",
+      // v4 — shown only when two courses start the same day
+      "#"+P+"v2-info-more{display:none;font-size:11px;font-weight:700;color:"+RED+";margin-bottom:8px;font-family:Lato,sans-serif;}",
       // Quiet fallback link under Register (demoted from a competing button)
       "#"+P+"v2-req{display:block;margin-top:8px;text-align:center;font-family:Lato,sans-serif;font-size:12px;color:#8a8aa0;text-decoration:underline;cursor:pointer;}",
       "#"+P+"v2-req:hover{color:"+NAVY+";}",
@@ -338,7 +423,9 @@ const CLIENT_SCRIPT = `
           // Info box — always visible, populated on date select (or auto-select)
           '<div id="'+P+'v2-info">' +
             '<div id="'+P+'v2-info-date"></div>' +
+            '<div id="'+P+'v2-info-loc"></div>' +
             '<div id="'+P+'v2-info-spots"></div>' +
+            '<div id="'+P+'v2-info-more"></div>' +
             '<a id="'+P+'v2-reg" class="'+P+'br" href="#" target="_blank" style="width:100%;box-sizing:border-box;justify-content:center;display:none;">Register →</a>' +
             '<span id="'+P+'v2-req">Don\\'t see a date that works? Request one →</span>' +
           '</div>' +
@@ -385,9 +472,21 @@ const CLIENT_SCRIPT = `
     }
 
     function setHeader(c) {
+      if (!c) return;
       var name = c.name.replace(/\\s*\\(.*$/, "").trim();
       document.getElementById(P+"mh-name").textContent  = name;
       document.getElementById(P+"mh-price").textContent = formatPrice(c.priceFrom, c.priceTo);
+    }
+
+    // Blank the info box (month navigation clears the selection).
+    function clearInfo() {
+      document.getElementById(P+"v2-info-date").textContent  = "";
+      document.getElementById(P+"v2-info-loc").textContent   = "";
+      document.getElementById(P+"v2-info-spots").textContent = "";
+      var more = document.getElementById(P+"v2-info-more");
+      more.textContent = "";
+      more.style.display = "none";
+      document.getElementById(P+"v2-reg").style.display = "none";
     }
 
     // Scroll hint — hide once user scrolls
@@ -406,6 +505,7 @@ const CLIENT_SCRIPT = `
 
     // ── V1 open ───────────────────────────────────────────────────────────
     function openDetails(c) {
+      if (!c) return;
       currentCourse = c;
       setHeader(c);
       var photoHtml = c.photoUrl
@@ -429,7 +529,7 @@ const CLIENT_SCRIPT = `
     // ── V2 open — auto-selects first available date ───────────────────────
     function openCal(c) {
       currentCourse = c;
-      setHeader(c);
+      setHeader(c);   // provisional; populateInfo() corrects it below
       // Navigate to month of first available date
       var first = firstDateKey();
       if (first) {
@@ -448,13 +548,29 @@ const CLIENT_SCRIPT = `
       renderV2();
       // Populate info box with first date
       if (first) populateInfo(first.course);
+      else clearInfo();
       openMo();
     }
 
+    // The one place every selection change passes through — which is exactly
+    // why the header is set here rather than only on open. If you add another
+    // way to change the selection, route it through this function.
     function populateInfo(c) {
+      if (!c) { clearInfo(); return; }
+      setHeader(c);
       var s = spots(c.maxSpots, c.registrationsCount);
       document.getElementById(P+"v2-info-date").textContent  = fmtRange(c.startDate, c.endDate);
+      document.getElementById(P+"v2-info-loc").textContent   = shortLocation(c.location);
       document.getElementById(P+"v2-info-spots").textContent = s;
+      var more = document.getElementById(P+"v2-info-more");
+      var n = sameDayCount(c);
+      if (n > 1) {
+        more.textContent = n + " courses start this day — tap the date again to switch.";
+        more.style.display = "block";
+      } else {
+        more.textContent = "";
+        more.style.display = "none";
+      }
       var reg = document.getElementById(P+"v2-reg");
       reg.href        = c.formUrl || c.pageUrl;
       reg.textContent = (s === "Full" ? "Join waitlist" : "Register") + " →";
@@ -488,13 +604,22 @@ const CLIENT_SCRIPT = `
       var grid = document.getElementById(P+"v2-grid");
       grid.innerHTML = html;
       grid.querySelectorAll("[data-mk]").forEach(function(cell) {
-        var k = cell.getAttribute("data-mk"), entries = map[k], entry = primaryEntry(entries);
-        if (!entry) return;
+        var k = cell.getAttribute("data-mk"), entries = map[k];
+        var list = distinctCourses(entries);
+        if (!list.length) return;
         cell.addEventListener("click", function() {
-          // Select the whole COURSE, not just the clicked day.
-          modalSelected = courseKey(entry.course);
-          selectedCourse = entry.course;
-          populateInfo(entry.course);
+          // Select the whole COURSE, not just the clicked day. Where several
+          // courses share the day, tapping again advances to the next one —
+          // otherwise the second course on Sep 12 / Sep 20 at Ganges would be
+          // unbookable, which is what happened before v4.
+          var idx = 0;
+          for (var i = 0; i < list.length; i++) {
+            if (courseKey(list[i]) === modalSelected) { idx = (i + 1) % list.length; break; }
+          }
+          var chosen = list[idx];
+          modalSelected  = courseKey(chosen);
+          selectedCourse = chosen;
+          populateInfo(chosen);
           renderV2();
         });
       });
@@ -507,45 +632,43 @@ const CLIENT_SCRIPT = `
     document.getElementById(P+"v1-pick").addEventListener("click", function() { openCal(currentCourse); });
 
     document.getElementById(P+"v2-back").addEventListener("click", function() {
-      // The Details view may never have been populated if the user entered
-      // straight into the calendar (via the page's Pick a Date button), so
-      // always (re)populate it with the current course before showing it.
-      if (currentCourse) openDetails(currentCourse);
+      // Go back to the course the visitor actually SELECTED, not the one the
+      // modal happened to open with — on a multi-course calendar those differ,
+      // and showing the wrong description here was half the confusion.
+      var c = selectedCourse || currentCourse;
+      if (c) openDetails(c);
       else showView("v1");
     });
     document.getElementById(P+"v2-prev").addEventListener("click", function() {
       modalCalMonth--; if (modalCalMonth<0) { modalCalMonth=11; modalCalYear--; }
       modalSelected = null;
       selectedCourse = null;
-      document.getElementById(P+"v2-info-date").textContent = "";
-      document.getElementById(P+"v2-info-spots").textContent = "";
-      document.getElementById(P+"v2-reg").style.display = "none";
+      clearInfo();
       renderV2();
     });
     document.getElementById(P+"v2-next").addEventListener("click", function() {
       modalCalMonth++; if (modalCalMonth>11) { modalCalMonth=0; modalCalYear++; }
       modalSelected = null;
       selectedCourse = null;
-      document.getElementById(P+"v2-info-date").textContent = "";
-      document.getElementById(P+"v2-info-spots").textContent = "";
-      document.getElementById(P+"v2-reg").style.display = "none";
+      clearInfo();
       renderV2();
     });
     document.getElementById(P+"v2-req").addEventListener("click", function() {
       var iframe = document.getElementById(P+"v3-iframe");
-      iframe.src = FORM_PAGE_URL + (currentCourse ? "?course="+encodeURIComponent(currentCourse.name) : "");
+      var c = selectedCourse || currentCourse;
+      iframe.src = FORM_PAGE_URL + (c ? "?course="+encodeURIComponent(c.name) : "");
       showView("v3");
     });
     document.getElementById(P+"v3-back").addEventListener("click", function() { showView("v2"); });
 
     // ── Page buttons ──────────────────────────────────────────────────────
     document.getElementById(P+"details-btn").addEventListener("click", function() {
-      var c = courses[0];
+      var c = leadCourse();
       if (!c) { alert("Course details are still loading — please try again in a moment."); return; }
       openDetails(c);
     });
     document.getElementById(P+"btn").addEventListener("click", function() {
-      var c = courses[0];
+      var c = leadCourse();
       if (!c) { alert("Course dates are still loading — please try again in a moment."); return; }
       openCal(c);
     });
