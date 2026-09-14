@@ -31,12 +31,10 @@ const CLIENT_SCRIPT = `
 
    CHANGELOG
      v4.2 2026-09-14
-       - ADD: empty state. A calendar with no bookable courses used to hide
-              the "Loading calendar…" line and put nothing in its place, so
-              an off-season feed rendered as a blank gap and the page buttons
-              alerted "still loading" — both of which read as a broken
-              widget. Now shows EMPTY_MSG (top of file, update the season
-              each year).
+       - ADD: empty state. A calendar with no bookable courses used to leave
+              the page buttons alerting "still loading", which read as a
+              broken widget. The season announcement itself lives in the site
+              notice strip (was-common-nav), not here.
        - ADD: the empty state is no longer a dead end. Request-a-Date used to
               be reachable only from inside the modal, and every route in
               needed a course — so with none, there was nothing a visitor
@@ -96,9 +94,10 @@ const CLIENT_SCRIPT = `
 
   var FORM_PAGE_URL = "https://was-request-form.dave-6bf.workers.dev/";
 
-  // Shown wherever a calendar has no bookable courses — an empty feed is the
-  // normal off-season state, not a fault. Update the season each year; it
-  // stops appearing on its own as soon as Corsizio has matching courses.
+  // Fallback wording for an empty feed. Not shown on the page — the season
+  // announcement is the site notice strip in was-common-nav, so keep the two
+  // in step if the date moves. This is only the alert text if SEE DETAILS is
+  // somehow clicked with no course loaded.
   var EMPTY_MSG = "Our 2026-27 calendar will launch mid-November.";
   var FAIL_MSG  = "Could not load the calendar — please try again shortly.";
 
@@ -729,12 +728,12 @@ const CLIENT_SCRIPT = `
         });
         var loadEl = document.getElementById(P+"loading");
         if (!courses.length) {
-          // No bookable courses. Say so plainly — hiding this line leaves a
-          // blank gap that reads as a broken widget. Then leave one thing
-          // worth doing: SEE DETAILS has no course to show, so it goes, and
-          // PICK A DATE becomes the way into the request form.
-          loadEl.textContent = EMPTY_MSG;
-          loadEl.style.color = NAVY;
+          // No bookable courses. The season announcement lives in the site
+          // notice strip (was-common-nav) rather than here, so this line just
+          // goes. What's left is the one thing worth doing: SEE DETAILS has no
+          // course to show, so it goes too, and PICK A DATE becomes the way
+          // into the request form.
+          loadEl.style.display = "none";
           var dBtn = document.getElementById(P+"details-btn");
           if (dBtn) dBtn.style.display = "none";
           var emptyLbl = document.getElementById(P+"btn-label");
