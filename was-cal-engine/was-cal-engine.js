@@ -45,6 +45,10 @@ const CLIENT_SCRIPT = `
        - FIX: a genuine fetch failure is now distinguished from an empty
               feed (loadFailed), so an outage never tells visitors the
               calendar launches in November.
+       - FIX: modal min-height 480px -> min(600px,88vh). The request form
+              needs ~451px (465 on a narrow phone) and was getting 383px
+              between the header and footer, cutting off Submit. Max-height
+              720px/92vh.
      v4.1 2026-08-13
        - Removed the "N courses start this day" prompt. Configs are now
          scoped so a calendar holds one course type, and two courses never
@@ -337,7 +341,15 @@ const CLIENT_SCRIPT = `
       "#"+P+"mo{display:none;position:fixed;z-index:2147483647;inset:0;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;}",
       "#"+P+"mo.show{display:flex;}",
       // Modal shell — FIXED height so V1 and V2 are identical size
-      "#"+P+"md{background:#fff;border-radius:10px;width:90%;max-width:440px;height:auto;min-height:480px;max-height:min(640px,90vh);display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(40,40,110,0.25);font-family:Lato,sans-serif;overflow:hidden;}",
+      // Height: the request form is the tallest thing the modal holds — it
+      // measures ~451px at 412px wide and ~465px on a narrow phone. At the
+      // old min-height of 480px the iframe got 480 - header - footer = 383px
+      // and the Submit button fell below the fold. 600px clears it in both
+      // routes with ~20px to spare on the tightest one (narrow phone, opened
+      // from the calendar so the footer is showing). Both bounds are capped
+      // against vh so a short viewport
+      // shrinks the modal instead of pushing it off screen.
+      "#"+P+"md{background:#fff;border-radius:10px;width:90%;max-width:440px;height:auto;min-height:min(600px,88vh);max-height:min(720px,92vh);display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(40,40,110,0.25);font-family:Lato,sans-serif;overflow:hidden;}",
       // Shared header
       "#"+P+"mh{background:"+NAVY+";padding:12px 14px;flex-shrink:0;display:flex;align-items:center;gap:12px;}",
       "#"+P+"mh-name{font-size:14px;font-weight:700;color:#fff;font-family:Lato,sans-serif;flex:1;min-width:0;line-height:1.25;}",

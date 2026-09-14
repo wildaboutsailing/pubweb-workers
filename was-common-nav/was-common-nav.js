@@ -25,6 +25,12 @@
  *  Cache is 5 minutes, so changes appear within ~5 min (or purge to force it).
  *
  *  CHANGELOG
+ *    2026-09-14  Site notice strip above the nav, on every site. Edit
+ *                NOTICE_TEXT near the top of NAV_JS to change it, or empty it
+ *                to remove the strip; NOTICE_UNTIL auto-retires it. The nav is
+ *                now a column (notice strip + the original 64px bar), and the
+ *                nav height, mobile-menu top offset and anchor-scroll offset
+ *                are all derived from NAV_H rather than hardcoded to 64/72.
  *    2026-07-03  Footer redesign: added a static Courses column linking the
  *                four course subdomains (B1 crosslinks); all columns left-
  *                aligned for a clean mobile stack; logos 110->84px; dropped the
@@ -51,7 +57,26 @@ const NAV_JS = String.raw`
   var LOGO       = 'https://assets.wildaboutsailing.com/logos/sailcanadalogo.jpg';
   var LOGO_PRIDE = 'https://assets.wildaboutsailing.com/logos/sailcanadapridelogo.png';
   var DEFAULT_TAGLINE = 'Sail Canada certified sailing lessons on<br>the beautiful Salish Sea.';
-  var NAV_OFFSET = 72; /* fixed nav height (64) + a little breathing room */
+  /* ---------- SITE NOTICE (strip above the nav) ----------
+     A one-line announcement across the top of every WAS site. To take it
+     down, empty NOTICE_TEXT — the nav height, the mobile menu offset and the
+     anchor-scroll offset are all derived from it, so nothing else needs
+     touching. NOTICE_UNTIL is a safety net: the strip removes itself at the
+     end of that day even if nobody gets round to clearing the text. */
+  var NOTICE_TEXT  = 'Our 2026-27 calendar will launch mid-November.';
+  var NOTICE_UNTIL = '2026-11-30';   /* YYYY-MM-DD, or '' for no expiry */
+  var NOTICE_H     = 34;             /* strip height in px */
+
+  function noticeOn() {
+    if (!NOTICE_TEXT) return false;
+    if (!NOTICE_UNTIL) return true;
+    var end = new Date(NOTICE_UNTIL + 'T23:59:59');
+    return !isNaN(end.getTime()) && new Date() <= end;
+  }
+
+  var STRIP_H = noticeOn() ? NOTICE_H : 0;
+  var NAV_H   = 64 + STRIP_H;        /* nav bar (64) + notice strip */
+  var NAV_OFFSET = NAV_H + 8; /* fixed nav height + a little breathing room */
 
   var HOST    = location.hostname;
   var IS_MAIN = (HOST === 'wildaboutsailing.com' || HOST === 'www.wildaboutsailing.com');
@@ -169,14 +194,37 @@ const NAV_JS = String.raw`
   function injectNav(items) {
     if (document.querySelector('#was-nav')) return;
 
+    /* The strip lives INSIDE the nav element rather than above it, so the
+       scroll-hide transform carries it along and there is only one fixed
+       element to reason about. */
     var nav = el('nav',
-      'position:fixed;top:0;left:0;right:0;width:100vw;height:64px;' +
+      'position:fixed;top:0;left:0;right:0;width:100vw;height:' + NAV_H + 'px;' +
       'z-index:2147483647;background:' + NAV_BG + ';' +
-      'display:flex;align-items:center;justify-content:space-between;' +
-      'padding:0 2rem;box-shadow:0 2px 16px rgba(0,0,0,0.45);' +
+      'display:flex;flex-direction:column;' +
+      'box-shadow:0 2px 16px rgba(0,0,0,0.45);' +
       'box-sizing:border-box;transition:transform 0.3s ease;'
     );
     nav.id = 'was-nav';
+
+    if (noticeOn()) {
+      var strip = el('div',
+        'width:100%;height:' + STRIP_H + 'px;flex-shrink:0;background:' + RED + ';' +
+        'display:flex;align-items:center;justify-content:center;' +
+        'padding:0 1rem;box-sizing:border-box;' +
+        'font-family:Inter,sans-serif;font-size:13px;font-weight:500;line-height:1.2;' +
+        'color:#fff;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+      );
+      strip.id = 'was-nav-notice';
+      strip.textContent = NOTICE_TEXT;
+      nav.appendChild(strip);
+    }
+
+    /* Everything that used to sit directly on the nav now sits in this row. */
+    var bar = el('div',
+      'width:100%;height:64px;flex-shrink:0;' +
+      'display:flex;align-items:center;justify-content:space-between;' +
+      'padding:0 2rem;box-sizing:border-box;'
+    );
 
     var wm = makeWordmark(19, true);
 
@@ -200,10 +248,11 @@ const NAV_JS = String.raw`
       hbtn.appendChild(el('span', 'display:block;width:22px;height:2px;background:#fff;border-radius:2px;'));
     }
 
-    nav.appendChild(wm); nav.appendChild(ld); nav.appendChild(hbtn);
+    bar.appendChild(wm); bar.appendChild(ld); bar.appendChild(hbtn);
+    nav.appendChild(bar);
 
     var menu = el('div',
-      'display:none;position:fixed;top:64px;left:0;right:0;width:100%;' +
+      'display:none;position:fixed;top:' + NAV_H + 'px;left:0;right:0;width:100%;' +
       'background:' + NAV_BG + ';z-index:2147483646;' +
       'border-top:1px solid rgba(255,255,255,0.1);' +
       'padding:0.5rem 0 1rem;box-sizing:border-box;'
