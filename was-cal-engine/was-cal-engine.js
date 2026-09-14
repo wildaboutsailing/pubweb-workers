@@ -30,6 +30,21 @@ const CLIENT_SCRIPT = `
    date order, so courses[0] is effectively arbitrary.
 
    CHANGELOG
+     v4.2 2026-09-14
+       - ADD: empty state. A calendar with no bookable courses used to hide
+              the "Loading calendar…" line and put nothing in its place, so
+              an off-season feed rendered as a blank gap and the page buttons
+              alerted "still loading" — both of which read as a broken
+              widget. Now shows EMPTY_MSG (top of file, update the season
+              each year).
+       - ADD: the empty state is no longer a dead end. Request-a-Date used to
+              be reachable only from inside the modal, and every route in
+              needed a course — so with none, there was nothing a visitor
+              could do. SEE DETAILS now hides and PICK A DATE becomes
+              REQUEST A DATE, opening the form via openRequest().
+       - FIX: a genuine fetch failure is now distinguished from an empty
+              feed (loadFailed), so an outage never tells visitors the
+              calendar launches in November.
      v4.1 2026-08-13
        - Removed the "N courses start this day" prompt. Configs are now
          scoped so a calendar holds one course type, and two courses never
@@ -77,6 +92,12 @@ const CLIENT_SCRIPT = `
 
   var FORM_PAGE_URL = "https://was-request-form.dave-6bf.workers.dev/";
 
+  // Shown wherever a calendar has no bookable courses — an empty feed is the
+  // normal off-season state, not a fault. Update the season each year; it
+  // stops appearing on its own as soon as Corsizio has matching courses.
+  var EMPTY_MSG = "Our 2026-27 calendar will launch mid-November.";
+  var FAIL_MSG  = "Could not load the calendar — please try again shortly.";
+
   function processQueue() {
     var queue = window.WASCalQueue || [];
     queue.forEach(function(cfg) { initCalendar(cfg); });
@@ -98,6 +119,7 @@ const CLIENT_SCRIPT = `
     var months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
     var days   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
     var courses = [], today = new Date(), curYear = today.getFullYear(), curMonth = today.getMonth(), selected = null;
+    var loadFailed = false;
     var modalCalMonth = today.getMonth(), modalCalYear = today.getFullYear(), modalSelected = null;
     var currentCourse = null, selectedCourse = null;
 
@@ -641,19 +663,37 @@ const CLIENT_SCRIPT = `
       var iframe = document.getElementById(P+"v3-iframe");
       var c = selectedCourse || currentCourse;
       iframe.src = FORM_PAGE_URL + (c ? "?course="+encodeURIComponent(c.name) : "");
+      // Reaching v3 from the calendar — "← Pick a Date" goes back to v2.
+      document.getElementById(P+"v3-foot").style.display = "flex";
       showView("v3");
     });
     document.getElementById(P+"v3-back").addEventListener("click", function() { showView("v2"); });
 
+    // Opens the request form on its own, with no course attached. This is the
+    // ONLY route into the modal when a calendar has no bookable courses —
+    // without it the empty state is a dead end, since every other path in
+    // needs a course. No v2 to go back to, so the footer is hidden and the
+    // header × is the way out.
+    function openRequest() {
+      document.getElementById(P+"mh-name").textContent  = "Request a date";
+      document.getElementById(P+"mh-price").textContent = "";
+      document.getElementById(P+"v3-iframe").src = FORM_PAGE_URL;
+      document.getElementById(P+"v3-foot").style.display = "none";
+      showView("v3");
+      openMo();
+    }
+
     // ── Page buttons ──────────────────────────────────────────────────────
     document.getElementById(P+"details-btn").addEventListener("click", function() {
       var c = leadCourse();
-      if (!c) { alert("Course details are still loading — please try again in a moment."); return; }
+      if (!c) { alert(loadFailed ? FAIL_MSG : EMPTY_MSG); return; }
       openDetails(c);
     });
     document.getElementById(P+"btn").addEventListener("click", function() {
       var c = leadCourse();
-      if (!c) { alert("Course dates are still loading — please try again in a moment."); return; }
+      // No courses and no failure = off-season. Send them to the request form
+      // rather than telling them to come back later and leaving it there.
+      if (!c) { if (loadFailed) { alert(FAIL_MSG); return; } openRequest(); return; }
       openCal(c);
     });
 
@@ -675,17 +715,32 @@ const CLIENT_SCRIPT = `
           }
           return true;
         });
-        document.getElementById(P+"loading").style.display = "none";
-        // Update pick-button labels now that we know the course durations.
-        var lbl = pickLabel();
-        var pageLbl  = document.getElementById(P+"btn-label");
-        if (pageLbl) pageLbl.textContent = lbl.toUpperCase();
-        var v1Lbl = document.getElementById(P+"v1-pick-label");
-        if (v1Lbl) v1Lbl.textContent = lbl;
+        var loadEl = document.getElementById(P+"loading");
+        if (!courses.length) {
+          // No bookable courses. Say so plainly — hiding this line leaves a
+          // blank gap that reads as a broken widget. Then leave one thing
+          // worth doing: SEE DETAILS has no course to show, so it goes, and
+          // PICK A DATE becomes the way into the request form.
+          loadEl.textContent = EMPTY_MSG;
+          loadEl.style.color = NAVY;
+          var dBtn = document.getElementById(P+"details-btn");
+          if (dBtn) dBtn.style.display = "none";
+          var emptyLbl = document.getElementById(P+"btn-label");
+          if (emptyLbl) emptyLbl.textContent = "REQUEST A DATE";
+        } else {
+          loadEl.style.display = "none";
+          // Update pick-button labels now that we know the course durations.
+          var lbl = pickLabel();
+          var pageLbl  = document.getElementById(P+"btn-label");
+          if (pageLbl) pageLbl.textContent = lbl.toUpperCase();
+          var v1Lbl = document.getElementById(P+"v1-pick-label");
+          if (v1Lbl) v1Lbl.textContent = lbl;
+        }
       })
       .catch(function() {
+        loadFailed = true;
         var el = document.getElementById(P+"loading");
-        el.textContent = "Could not load calendar.";
+        el.textContent = FAIL_MSG;
         el.style.color = "#DC3C32";
       });
 
